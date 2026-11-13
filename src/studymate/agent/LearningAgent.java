@@ -51,6 +51,34 @@ public class LearningAgent {
             StudyRepository repository,
             StudyPlanner planner) {
 
+        if (client == null) {
+
+            throw new IllegalArgumentException(
+                    "LLM client is required."
+            );
+        }
+
+        if (tools == null) {
+
+            throw new IllegalArgumentException(
+                    "Tool registry is required."
+            );
+        }
+
+        if (repository == null) {
+
+            throw new IllegalArgumentException(
+                    "Study repository is required."
+            );
+        }
+
+        if (planner == null) {
+
+            throw new IllegalArgumentException(
+                    "Study planner is required."
+            );
+        }
+
         this.client = client;
         this.tools = tools;
         this.repository = repository;
@@ -174,7 +202,9 @@ public class LearningAgent {
                 enough information to answer the question,
                 clearly say that the available course
                 evidence is insufficient.
-                """.formatted(question);
+                """.formatted(
+                        question
+                );
 
         return generateArtifact(
                 courseId,
@@ -202,8 +232,8 @@ public class LearningAgent {
             );
         }
 
-        if (repository.findCourse(courseId)
-                == null) {
+        if (repository.findCourse(
+                courseId) == null) {
 
             throw new IllegalArgumentException(
                     "Unknown course ID."
@@ -260,33 +290,7 @@ public class LearningAgent {
         }
 
         String instructions =
-                """
-                Identify the most important study topics
-                from the supplied course evidence.
-
-                For each topic estimate the amount of study
-                time required and assign a priority.
-
-                Return ONLY lines in exactly this format:
-
-                TOPIC|topic name|estimated minutes|priority
-
-                Rules:
-
-                - Produce approximately 6 to 10 topics.
-                - Estimated minutes must be a positive integer.
-                - Use approximately 30 to 90 minutes per topic.
-                - Priority must be an integer from 1 to 5.
-                - Priority 5 means highest importance.
-                - Use only topics supported by the supplied
-                  course evidence.
-                - Do not include headings.
-                - Do not include explanations.
-                - Do not include Markdown.
-                - Do not include source identifiers.
-                - Do not include any text before or after
-                  the TOPIC lines.
-                """;
+                buildStudyTopicInstructions();
 
         ModelReply reply =
                 client.generate(
@@ -305,6 +309,15 @@ public class LearningAgent {
         List<StudyTopic> topics =
                 parseStudyTopics(
                         reply.getFinalPayload()
+                );
+
+        // F09/F10:
+        // Attach stored quiz accuracy to matching topics
+        // before a scheduling strategy is applied.
+        topics =
+                applyProgressToTopics(
+                        courseId,
+                        topics
                 );
 
         if (topics.isEmpty()) {
@@ -334,6 +347,334 @@ public class LearningAgent {
     }
 
     // =====================================================
+    // F10 - PREVIEW STUDY PLAN REVISION
+    // =====================================================
+
+    public StudyPlan previewStudyPlanRevision(
+            StudyPlan currentPlan,
+            LocalDate newExamDate,
+            List<AvailabilitySlot> availability,
+            SchedulingStrategy strategy)
+            throws Exception {
+
+        if (currentPlan == null) {
+
+            throw new IllegalArgumentException(
+                    "Current study plan is required."
+            );
+        }
+
+        if (newExamDate == null) {
+
+            throw new IllegalArgumentException(
+                    "Exam date is required."
+            );
+        }
+
+        if (!newExamDate.isAfter(
+                LocalDate.now())) {
+
+            throw new IllegalArgumentException(
+                    "Exam date must be in the future."
+            );
+        }
+
+        if (availability == null
+                || availability.isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "Availability is required."
+            );
+        }
+
+        if (strategy == null) {
+
+            throw new IllegalArgumentException(
+                    "Scheduling strategy is required."
+            );
+        }
+
+        UUID courseId =
+                currentPlan.getCourseId();
+
+        if (repository.findCourse(
+                courseId) == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        ToolResult retrieval =
+                tools.execute(
+                        "retrieve",
+                        Map.of(
+                                "courseId",
+                                courseId.toString(),
+                                "query",
+                                ""
+                        )
+                );
+
+        if (retrieval.getSourceIds()
+                .isEmpty()) {
+
+            throw new IllegalStateException(
+                    "No course evidence is available."
+            );
+        }
+
+        String instructions =
+                buildStudyTopicInstructions();
+
+        ModelReply reply =
+                client.generate(
+                        retrieval.getData(),
+                        instructions
+                );
+
+        if (reply.getType()
+                != ModelReply.Type.FINAL) {
+
+            throw new IllegalStateException(
+                    "Model did not return study topics."
+            );
+        }
+
+        List<StudyTopic> topics =
+                parseStudyTopics(
+                        reply.getFinalPayload()
+                );
+
+        // Use committed F09 progress during adaptation.
+        topics =
+                applyProgressToTopics(
+                        courseId,
+                        topics
+                );
+
+        if (topics.isEmpty()) {
+
+            throw new IllegalStateException(
+                    "No valid study topics were generated."
+            );
+        }
+
+        StudyPlan candidate =
+                planner.createPlan(
+                        courseId,
+                        newExamDate,
+                        topics,
+                        availability,
+                        strategy
+                );
+
+        // -------------------------------------------------
+        // IMPORTANT:
+        // Preview does NOT write anything to SQLite.
+        // -------------------------------------------------
+
+        if (!candidate.isFeasible()) {
+
+            return candidate;
+        }
+
+        // Keep the same logical plan ID and produce
+        // exactly the next version.
+        return currentPlan.nextVersion(
+                candidate.getExamDate(),
+                candidate.getStrategyName(),
+                candidate.getSessions(),
+                candidate.getUnscheduledTopics()
+        );
+    }
+
+    private String buildStudyTopicInstructions() {
+
+        return """
+                Identify the most important study topics
+                from the supplied course evidence.
+
+                For each topic estimate the amount of study
+                time required and assign a priority.
+
+                Return ONLY lines in exactly this format:
+
+                TOPIC|topic name|estimated minutes|priority
+
+                Rules:
+
+                - Produce approximately 6 to 10 topics.
+                - Estimated minutes must be a positive integer.
+                - Use approximately 30 to 90 minutes per topic.
+                - Priority must be an integer from 1 to 5.
+                - Priority 5 means highest importance.
+                - Use only topics supported by the supplied
+                  course evidence.
+                - Do not include headings.
+                - Do not include explanations.
+                - Do not include Markdown.
+                - Do not include source identifiers.
+                - Do not include any text before or after
+                  the TOPIC lines.
+                """;
+    }
+
+    // =====================================================
+    // F05 / F09 / F10 - APPLY STORED PROGRESS TO TOPICS
+    // =====================================================
+
+    private List<StudyTopic> applyProgressToTopics(
+            UUID courseId,
+            List<StudyTopic> topics) {
+
+        if (topics == null
+                || topics.isEmpty()) {
+
+            return List.of();
+        }
+
+        List<QuizAttempt> attempts =
+                repository.loadAttempts(
+                        courseId
+                );
+
+        if (attempts.isEmpty()) {
+
+            return topics;
+        }
+
+        Map<String, int[]> totals =
+                new LinkedHashMap<>();
+
+        for (QuizAttempt attempt :
+                attempts) {
+
+            if (attempt == null) {
+
+                continue;
+            }
+
+            String progressTopic =
+                    normalizeTopicName(
+                            attempt.getTopic()
+                    );
+
+            if (progressTopic.isBlank()) {
+
+                continue;
+            }
+
+            int[] counts =
+                    totals.computeIfAbsent(
+                            progressTopic,
+                            key -> new int[] {
+                                    0,
+                                    0
+                            }
+                    );
+
+            counts[0] +=
+                    attempt.getCorrectCount();
+
+            counts[1] +=
+                    attempt.getGradedCount();
+        }
+
+        List<StudyTopic> enriched =
+                new ArrayList<>();
+
+        for (StudyTopic topic :
+                topics) {
+
+            String generatedName =
+                    normalizeTopicName(
+                            topic.getName()
+                    );
+
+            int totalCorrect =
+                    0;
+
+            int totalGraded =
+                    0;
+
+            for (Map.Entry<String, int[]> entry :
+                    totals.entrySet()) {
+
+                if (topicNamesMatch(
+                        generatedName,
+                        entry.getKey())) {
+
+                    totalCorrect +=
+                            entry.getValue()[0];
+
+                    totalGraded +=
+                            entry.getValue()[1];
+                }
+            }
+
+            Double accuracy =
+                    null;
+
+            // Same evidence rule used by F09:
+            // fewer than 3 graded observations means
+            // insufficient evidence, so accuracy remains null.
+            if (totalGraded >= 3) {
+
+                accuracy =
+                        100.0
+                                * totalCorrect
+                                / totalGraded;
+            }
+
+            enriched.add(
+                    new StudyTopic(
+                            topic.getName(),
+                            topic.getEstimatedMinutes(),
+                            topic.getPriority(),
+                            accuracy
+                    )
+            );
+        }
+
+        return enriched;
+    }
+
+    private boolean topicNamesMatch(
+            String first,
+            String second) {
+
+        if (first == null
+                || second == null
+                || first.isBlank()
+                || second.isBlank()) {
+
+            return false;
+        }
+
+        return first.equals(second)
+                || first.contains(second)
+                || second.contains(first);
+    }
+
+    private String normalizeTopicName(
+            String topic) {
+
+        if (topic == null) {
+
+            return "";
+        }
+
+        return topic
+                .toLowerCase()
+                .replaceAll(
+                        "[^a-z0-9]+",
+                        " "
+                )
+                .trim();
+    }
+
+    // =====================================================
     // F06 - GENERATE FLASHCARDS
     // =====================================================
 
@@ -350,8 +691,8 @@ public class LearningAgent {
             );
         }
 
-        if (repository.findCourse(courseId)
-                == null) {
+        if (repository.findCourse(
+                courseId) == null) {
 
             throw new IllegalArgumentException(
                     "Unknown course ID."
@@ -492,8 +833,8 @@ public class LearningAgent {
             );
         }
 
-        if (repository.findCourse(courseId)
-                == null) {
+        if (repository.findCourse(
+                courseId) == null) {
 
             throw new IllegalArgumentException(
                     "Unknown course ID."
@@ -585,7 +926,7 @@ public class LearningAgent {
                         requestedCount
                 );
 
-        // One repair attempt.
+        // One complete repair attempt.
         if (questions.size()
                 != requestedCount) {
 
@@ -779,7 +1120,9 @@ public class LearningAgent {
         }
 
         if (!quiz.getId()
-                .equals(attempt.getQuizId())) {
+                .equals(
+                        attempt.getQuizId()
+                )) {
 
             throw new IllegalArgumentException(
                     "Quiz attempt does not belong "
@@ -861,14 +1204,14 @@ public class LearningAgent {
             mistakes.append(
                     "CORRECT ANSWER: "
                             + question
-                            .getCorrectOptionLetter()
+                                    .getCorrectOptionLetter()
                             + ". "
                             + question
-                            .getOptions()
-                            .get(
-                                    question
-                                    .getCorrectOptionIndex()
-                            )
+                                    .getOptions()
+                                    .get(
+                                            question
+                                                    .getCorrectOptionIndex()
+                                    )
                             + "\n"
             );
 
@@ -993,7 +1336,9 @@ public class LearningAgent {
             }
 
             if (!allowedQuestionIds
-                    .contains(questionId)) {
+                    .contains(
+                            questionId
+                    )) {
 
                 continue;
             }
@@ -1016,7 +1361,7 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // F05 PARSING
+    // F05 / F10 - STUDY TOPIC PARSING
     // =====================================================
 
     private List<StudyTopic> parseStudyTopics(
@@ -1098,7 +1443,7 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // F06 PARSING + VALIDATION
+    // F06 - FLASHCARD PARSING + VALIDATION
     // =====================================================
 
     private List<Flashcard> parseFlashcards(
@@ -1218,7 +1563,7 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // F07 PARSING + VALIDATION
+    // F07 - QUIZ PARSING + VALIDATION
     // =====================================================
 
     private List<Question> parseQuizQuestions(
@@ -1436,8 +1781,8 @@ public class LearningAgent {
             );
         }
 
-        if (repository.findCourse(courseId)
-                == null) {
+        if (repository.findCourse(
+                courseId) == null) {
 
             throw new IllegalArgumentException(
                     "Unknown course ID."

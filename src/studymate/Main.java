@@ -13,6 +13,7 @@ import studymate.agent.LearningAgent;
 import studymate.agent.OpenAIAdapter;
 import studymate.agent.RetrievalTool;
 import studymate.agent.ToolRegistry;
+import studymate.controller.AgentController;
 import studymate.extraction.TextExtractor;
 import studymate.model.AvailabilitySlot;
 import studymate.model.Course;
@@ -87,10 +88,6 @@ public class Main {
                         repository
                 );
 
-        // =================================================
-        // F09 - PROGRESS TRACKER / OBSERVER
-        // =================================================
-
         ProgressTracker progressTracker =
                 new ProgressTracker(
                         repository
@@ -114,14 +111,24 @@ public class Main {
                         progressTracker
                 );
 
+        // F10 Facade / Command invoker
+        AgentController controller =
+                new AgentController(
+                        learningAgent,
+                        repository
+                );
+
         Scanner scanner =
                 new Scanner(System.in);
 
-        boolean running = true;
+        boolean running =
+                true;
 
         while (running) {
 
-            showMenu(course);
+            showMenu(
+                    course
+            );
 
             String option =
                     scanner.nextLine()
@@ -192,6 +199,35 @@ public class Main {
                         );
 
                 case "10" ->
+                        adaptStudyPlan(
+                                scanner,
+                                controller,
+                                repository,
+                                course
+                        );
+
+                case "11" ->
+                        confirmPlanRevision(
+                                controller
+                        );
+
+                case "12" ->
+                        rejectPlanRevision(
+                                controller
+                        );
+
+                case "13" ->
+                        undoPlanRevision(
+                                controller
+                        );
+
+                case "14" ->
+                        showLatestPlan(
+                                repository,
+                                course
+                        );
+
+                case "15" ->
                         showMaterials(
                                 repository,
                                 course
@@ -199,7 +235,8 @@ public class Main {
 
                 case "0" -> {
 
-                    running = false;
+                    running =
+                            false;
 
                     System.out.println();
 
@@ -209,7 +246,7 @@ public class Main {
                 }
 
                 case "" -> {
-                    // Ignore accidental blank input.
+                    // Ignore blank input.
                 }
 
                 default -> {
@@ -275,7 +312,27 @@ public class Main {
         );
 
         System.out.println(
-                "10 - Show saved materials"
+                "10 - Adapt study plan (preview)"
+        );
+
+        System.out.println(
+                "11 - Confirm plan revision"
+        );
+
+        System.out.println(
+                "12 - Reject plan revision"
+        );
+
+        System.out.println(
+                "13 - Undo last plan revision"
+        );
+
+        System.out.println(
+                "14 - Show latest study plan"
+        );
+
+        System.out.println(
+                "15 - Show saved materials"
         );
 
         System.out.println(
@@ -331,7 +388,8 @@ public class Main {
 
             System.out.println(
                     "Chunks: "
-                            + material.chunks()
+                            + material
+                                    .chunks()
                                     .size()
             );
 
@@ -352,7 +410,7 @@ public class Main {
     }
 
     // =====================================================
-    // F02 - SUMMARISE MATERIALS
+    // F02 - SUMMARY
     // =====================================================
 
     private static void summarise(
@@ -405,7 +463,7 @@ public class Main {
     }
 
     // =====================================================
-    // F03 - EXTRACT KEY CONCEPTS
+    // F03 - CONCEPTS
     // =====================================================
 
     private static void extractConcepts(
@@ -537,182 +595,21 @@ public class Main {
 
             System.out.println();
 
-            System.out.print(
-                    "Exam date (YYYY-MM-DD): "
-            );
-
             LocalDate examDate =
-                    LocalDate.parse(
-                            scanner.nextLine()
-                                    .trim()
+                    readExamDate(
+                            scanner
                     );
-
-            if (!examDate.isAfter(
-                    LocalDate.now())) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Plan rejected: "
-                                + "exam date must be "
-                                + "in the future."
-                );
-
-                return;
-            }
-
-            System.out.print(
-                    "Number of available study days: "
-            );
-
-            int numberOfDays =
-                    Integer.parseInt(
-                            scanner.nextLine()
-                                    .trim()
-                    );
-
-            if (numberOfDays <= 0) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Plan rejected: "
-                                + "availability must "
-                                + "contain at least one day."
-                );
-
-                return;
-            }
 
             List<AvailabilitySlot> availability =
-                    new ArrayList<>();
-
-            for (int i = 1;
-                 i <= numberOfDays;
-                 i++) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Availability "
-                                + i
-                                + ":"
-                );
-
-                System.out.print(
-                        "Date (YYYY-MM-DD): "
-                );
-
-                LocalDate date =
-                        LocalDate.parse(
-                                scanner.nextLine()
-                                        .trim()
-                        );
-
-                if (date.isBefore(
-                        LocalDate.now())) {
-
-                    System.out.println();
-
-                    System.out.println(
-                            "Plan rejected: "
-                                    + "availability cannot "
-                                    + "be in the past."
+                    readAvailability(
+                            scanner,
+                            examDate
                     );
 
-                    return;
-                }
-
-                if (!date.isBefore(
-                        examDate)) {
-
-                    System.out.println();
-
-                    System.out.println(
-                            "Plan rejected: "
-                                    + "availability must be "
-                                    + "before the exam date."
+            SchedulingStrategy strategy =
+                    readStrategy(
+                            scanner
                     );
-
-                    return;
-                }
-
-                System.out.print(
-                        "Available minutes: "
-                );
-
-                int minutes =
-                        Integer.parseInt(
-                                scanner.nextLine()
-                                        .trim()
-                        );
-
-                if (minutes <= 0) {
-
-                    System.out.println();
-
-                    System.out.println(
-                            "Plan rejected: "
-                                    + "available minutes "
-                                    + "must be positive."
-                    );
-
-                    return;
-                }
-
-                availability.add(
-                        new AvailabilitySlot(
-                                date,
-                                minutes
-                        )
-                );
-            }
-
-            System.out.println();
-
-            System.out.println(
-                    "Choose scheduling strategy:"
-            );
-
-            System.out.println(
-                    "1 - Deadline"
-            );
-
-            System.out.println(
-                    "2 - Weak Topic"
-            );
-
-            System.out.print(
-                    "Strategy: "
-            );
-
-            String strategyChoice =
-                    scanner.nextLine()
-                            .trim();
-
-            SchedulingStrategy strategy;
-
-            if (strategyChoice.equals("1")) {
-
-                strategy =
-                        new DeadlineStrategy();
-
-            } else if (strategyChoice.equals("2")) {
-
-                strategy =
-                        new WeakTopicStrategy();
-
-            } else {
-
-                System.out.println();
-
-                System.out.println(
-                        "Plan rejected: "
-                                + "invalid strategy."
-                );
-
-                return;
-            }
 
             System.out.println();
 
@@ -733,24 +630,6 @@ public class Main {
                     plan
             );
 
-        } catch (DateTimeParseException e) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Plan rejected: "
-                            + "date must use YYYY-MM-DD."
-            );
-
-        } catch (NumberFormatException e) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Plan rejected: "
-                            + "please enter a valid number."
-            );
-
         } catch (Exception e) {
 
             System.out.println();
@@ -762,105 +641,8 @@ public class Main {
         }
     }
 
-    private static void printStudyPlan(
-            StudyPlan plan) {
-
-        System.out.println();
-
-        System.out.println(
-                "===== STUDY PLAN ====="
-        );
-
-        System.out.println();
-
-        System.out.println(
-                "Exam date: "
-                        + plan.getExamDate()
-        );
-
-        System.out.println(
-                "Strategy: "
-                        + plan.getStrategyName()
-        );
-
-        System.out.println();
-
-        if (plan.getSessions()
-                .isEmpty()) {
-
-            System.out.println(
-                    "No sessions could be scheduled."
-            );
-
-        } else {
-
-            System.out.println(
-                    "Scheduled sessions:"
-            );
-
-            for (StudySession session :
-                    plan.getSessions()) {
-
-                System.out.println(
-                        "- "
-                                + session.getDate()
-                                + " | "
-                                + session.getTopic()
-                                + " | "
-                                + session.getMinutes()
-                                + " min"
-                );
-            }
-        }
-
-        System.out.println();
-
-        if (plan.isFeasible()) {
-
-            System.out.println(
-                    "Plan status: FEASIBLE"
-            );
-
-            System.out.println(
-                    "The study plan was saved."
-            );
-
-        } else {
-
-            System.out.println(
-                    "Plan status: "
-                            + "INSUFFICIENT CAPACITY"
-            );
-
-            System.out.println(
-                    "The study plan was NOT saved."
-            );
-
-            System.out.println();
-
-            System.out.println(
-                    "Unscheduled work:"
-            );
-
-            for (String topic :
-                    plan.getUnscheduledTopics()) {
-
-                System.out.println(
-                        "- " + topic
-                );
-            }
-
-            System.out.println();
-
-            System.out.println(
-                    "Add more study time "
-                            + "or reduce the scope."
-            );
-        }
-    }
-
     // =====================================================
-    // F06 - GENERATE FLASHCARDS
+    // F06 - FLASHCARDS
     // =====================================================
 
     private static void generateFlashcards(
@@ -900,36 +682,13 @@ public class Main {
                 "Number of flashcards (1-30): "
         );
 
-        String countText =
-                scanner.nextLine()
-                        .trim();
-
         try {
 
             int requestedCount =
                     Integer.parseInt(
-                            countText
+                            scanner.nextLine()
+                                    .trim()
                     );
-
-            if (requestedCount < 1
-                    || requestedCount > 30) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Flashcard generation rejected: "
-                                + "count must be between "
-                                + "1 and 30."
-                );
-
-                return;
-            }
-
-            System.out.println();
-
-            System.out.println(
-                    "Generating grounded flashcards..."
-            );
 
             FlashcardDeck deck =
                     learningAgent
@@ -941,15 +700,6 @@ public class Main {
 
             printFlashcardDeck(
                     deck
-            );
-
-        } catch (NumberFormatException e) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Flashcard generation rejected: "
-                            + "please enter a valid number."
             );
 
         } catch (Exception e) {
@@ -986,7 +736,8 @@ public class Main {
 
         System.out.println(
                 "Generated cards: "
-                        + deck.getCards()
+                        + deck
+                                .getCards()
                                 .size()
         );
 
@@ -1007,13 +758,15 @@ public class Main {
             return;
         }
 
-        int number = 1;
+        int number =
+                1;
 
         for (Flashcard card :
                 deck.getCards()) {
 
             System.out.println(
-                    "Card " + number
+                    "Card "
+                            + number
             );
 
             System.out.println(
@@ -1036,24 +789,13 @@ public class Main {
             number++;
         }
 
-        if (deck.isReducedDeck()) {
-
-            System.out.println(
-                    "Note: The available course evidence "
-                            + "supported fewer cards than "
-                            + "requested."
-            );
-
-            System.out.println();
-        }
-
         System.out.println(
                 "The flashcard deck was saved."
         );
     }
 
     // =====================================================
-    // F07 - GENERATE QUIZ
+    // F07 - QUIZ GENERATION
     // =====================================================
 
     private static void generateQuiz(
@@ -1076,18 +818,6 @@ public class Main {
         String topic =
                 scanner.nextLine()
                         .trim();
-
-        if (topic.isBlank()) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Quiz generation rejected: "
-                            + "topic cannot be empty."
-            );
-
-            return;
-        }
 
         System.out.println();
 
@@ -1115,31 +845,18 @@ public class Main {
                 scanner.nextLine()
                         .trim();
 
-        String difficulty;
+        String difficulty =
+                switch (difficultyChoice) {
 
-        switch (difficultyChoice) {
+                    case "1" -> "easy";
+                    case "2" -> "medium";
+                    case "3" -> "hard";
 
-            case "1" ->
-                    difficulty = "easy";
-
-            case "2" ->
-                    difficulty = "medium";
-
-            case "3" ->
-                    difficulty = "hard";
-
-            default -> {
-
-                System.out.println();
-
-                System.out.println(
-                        "Quiz generation rejected: "
-                                + "invalid difficulty."
-                );
-
-                return;
-            }
-        }
+                    default ->
+                            throw new IllegalArgumentException(
+                                    "Invalid difficulty."
+                            );
+                };
 
         System.out.print(
                 "Number of questions (1-20): "
@@ -1152,20 +869,6 @@ public class Main {
                             scanner.nextLine()
                                     .trim()
                     );
-
-            if (requestedCount < 1
-                    || requestedCount > 20) {
-
-                System.out.println();
-
-                System.out.println(
-                        "Quiz generation rejected: "
-                                + "count must be between "
-                                + "1 and 20."
-                );
-
-                return;
-            }
 
             System.out.println();
 
@@ -1184,15 +887,6 @@ public class Main {
 
             printQuiz(
                     quiz
-            );
-
-        } catch (NumberFormatException e) {
-
-            System.out.println();
-
-            System.out.println(
-                    "Quiz generation rejected: "
-                            + "please enter a valid number."
             );
 
         } catch (Exception e) {
@@ -1229,19 +923,22 @@ public class Main {
 
         System.out.println(
                 "Difficulty: "
-                        + quiz.getDifficulty()
+                        + quiz
+                                .getDifficulty()
                                 .toUpperCase()
         );
 
         System.out.println(
                 "Questions: "
-                        + quiz.getQuestions()
+                        + quiz
+                                .getQuestions()
                                 .size()
         );
 
         System.out.println();
 
-        int number = 1;
+        int number =
+                1;
 
         for (Question question :
                 quiz.getQuestions()) {
@@ -1290,7 +987,7 @@ public class Main {
     }
 
     // =====================================================
-    // F08 - GRADE QUIZ
+    // F08 - QUIZ GRADING
     // =====================================================
 
     private static void gradeQuiz(
@@ -1311,26 +1008,20 @@ public class Main {
                 "Quiz ID: "
         );
 
-        String quizIdText =
-                scanner.nextLine()
-                        .trim();
-
         UUID quizId;
 
         try {
 
             quizId =
                     UUID.fromString(
-                            quizIdText
+                            scanner.nextLine()
+                                    .trim()
                     );
 
         } catch (IllegalArgumentException e) {
 
-            System.out.println();
-
             System.out.println(
-                    "Grading rejected: "
-                            + "invalid Quiz ID."
+                    "Grading rejected: invalid Quiz ID."
             );
 
             return;
@@ -1343,11 +1034,8 @@ public class Main {
 
         if (quiz == null) {
 
-            System.out.println();
-
             System.out.println(
-                    "Grading rejected: "
-                            + "quiz was not found."
+                    "Quiz was not found."
             );
 
             return;
@@ -1362,13 +1050,15 @@ public class Main {
 
         System.out.println(
                 "Difficulty: "
-                        + quiz.getDifficulty()
+                        + quiz
+                                .getDifficulty()
                                 .toUpperCase()
         );
 
         System.out.println(
                 "Questions: "
-                        + quiz.getQuestions()
+                        + quiz
+                                .getQuestions()
                                 .size()
         );
 
@@ -1379,13 +1069,13 @@ public class Main {
                         + "(press Enter to create one): "
         );
 
-        String attemptIdText =
+        String attemptText =
                 scanner.nextLine()
                         .trim();
 
         UUID attemptId;
 
-        if (attemptIdText.isBlank()) {
+        if (attemptText.isBlank()) {
 
             attemptId =
                     UUID.randomUUID();
@@ -1401,39 +1091,33 @@ public class Main {
 
                 attemptId =
                         UUID.fromString(
-                                attemptIdText
+                                attemptText
                         );
 
             } catch (IllegalArgumentException e) {
 
-                System.out.println();
-
                 System.out.println(
-                        "Grading rejected: "
-                                + "invalid Attempt ID."
+                        "Invalid Attempt ID."
                 );
 
                 return;
             }
         }
 
-        QuizAttempt previousAttempt =
+        QuizAttempt previous =
                 repository.findAttempt(
                         attemptId
                 );
 
-        if (previousAttempt != null) {
+        if (previous != null) {
 
-            if (!previousAttempt
+            if (!previous
                     .getQuizId()
                     .equals(quizId)) {
 
-                System.out.println();
-
                 System.out.println(
-                        "Grading rejected: "
-                                + "this Attempt ID already "
-                                + "belongs to another quiz."
+                        "Attempt ID belongs "
+                                + "to another quiz."
                 );
 
                 return;
@@ -1452,7 +1136,7 @@ public class Main {
 
             printQuizResult(
                     quiz,
-                    previousAttempt,
+                    previous,
                     learningAgent,
                     false
             );
@@ -1460,10 +1144,10 @@ public class Main {
             return;
         }
 
-        List<Integer> selectedAnswers =
+        List<Integer> answers =
                 new ArrayList<>();
 
-        boolean hasSkippedAnswers =
+        boolean skipped =
                 false;
 
         List<Question> questions =
@@ -1522,32 +1206,31 @@ public class Main {
                 switch (answer) {
 
                     case "A" ->
-                            selectedAnswers.add(0);
+                            answers.add(0);
 
                     case "B" ->
-                            selectedAnswers.add(1);
+                            answers.add(1);
 
                     case "C" ->
-                            selectedAnswers.add(2);
+                            answers.add(2);
 
                     case "D" ->
-                            selectedAnswers.add(3);
+                            answers.add(3);
 
                     case "S" -> {
 
-                        selectedAnswers.add(
+                        answers.add(
                                 null
                         );
 
-                        hasSkippedAnswers =
+                        skipped =
                                 true;
                     }
 
                     default -> {
 
                         System.out.println(
-                                "Please enter A, B, C, D, "
-                                        + "or S."
+                                "Please enter A, B, C, D, or S."
                         );
 
                         continue;
@@ -1558,7 +1241,7 @@ public class Main {
             }
         }
 
-        if (hasSkippedAnswers) {
+        if (skipped) {
 
             System.out.println();
 
@@ -1567,18 +1250,12 @@ public class Main {
             );
 
             System.out.print(
-                    "Submit with skipped answers? "
-                            + "(Y/N): "
+                    "Submit with skipped answers? (Y/N): "
             );
 
-            String confirmation =
-                    scanner.nextLine()
-                            .trim()
-                            .toUpperCase();
-
-            if (!confirmation.equals("Y")) {
-
-                System.out.println();
+            if (!scanner.nextLine()
+                    .trim()
+                    .equalsIgnoreCase("Y")) {
 
                 System.out.println(
                         "Submission cancelled."
@@ -1594,7 +1271,7 @@ public class Main {
                     quizService.grade(
                             quizId,
                             attemptId,
-                            selectedAnswers
+                            answers
                     );
 
             printQuizResult(
@@ -1605,8 +1282,6 @@ public class Main {
             );
 
         } catch (Exception e) {
-
-            System.out.println();
 
             System.out.println(
                     "Grading failed: "
@@ -1662,22 +1337,14 @@ public class Main {
         Map<UUID, String> feedback =
                 Map.of();
 
-        boolean hasWrongAnswer =
-                false;
+        boolean hasWrong =
+                results.stream()
+                        .anyMatch(
+                                result ->
+                                        !result.isCorrect()
+                        );
 
-        for (QuestionResult result :
-                results) {
-
-            if (!result.isCorrect()) {
-
-                hasWrongAnswer =
-                        true;
-
-                break;
-            }
-        }
-
-        if (hasWrongAnswer
+        if (hasWrong
                 && newSubmission) {
 
             System.out.println(
@@ -1721,18 +1388,12 @@ public class Main {
                             + ":"
             );
 
-            if (result.isCorrect()) {
-
-                System.out.println(
-                        "Result: CORRECT"
-                );
-
-            } else {
-
-                System.out.println(
-                        "Result: INCORRECT"
-                );
-            }
+            System.out.println(
+                    "Result: "
+                            + (result.isCorrect()
+                            ? "CORRECT"
+                            : "INCORRECT")
+            );
 
             if (result.isSkipped()) {
 
@@ -1781,17 +1442,13 @@ public class Main {
                                     + explanation
                     );
 
-                } else if (newSubmission) {
-
-                    System.out.println(
-                            "Explanation: "
-                                    + question.getExplanation()
-                    );
-
                 } else {
 
                     System.out.println(
-                            "Stored explanation: "
+                            newSubmission
+                                    ? "Explanation: "
+                                    + question.getExplanation()
+                                    : "Stored explanation: "
                                     + question.getExplanation()
                     );
                 }
@@ -1873,10 +1530,6 @@ public class Main {
                                 + "recorded yet."
                 );
 
-                System.out.println(
-                        "No progress judgement was made."
-                );
-
                 return;
             }
 
@@ -1921,14 +1574,14 @@ public class Main {
                 System.out.println();
             }
 
-            List<TopicProgress> weakTopics =
-                    summary.getWeakTopics();
-
             System.out.println(
                     "===== WEAK TOPICS ====="
             );
 
             System.out.println();
+
+            List<TopicProgress> weakTopics =
+                    summary.getWeakTopics();
 
             if (weakTopics.isEmpty()) {
 
@@ -1939,7 +1592,8 @@ public class Main {
 
             } else {
 
-                int rank = 1;
+                int rank =
+                        1;
 
                 for (TopicProgress topic :
                         weakTopics) {
@@ -1956,10 +1610,6 @@ public class Main {
                 }
             }
 
-            List<TopicProgress> insufficient =
-                    summary
-                            .getInsufficientDataTopics();
-
             System.out.println();
 
             System.out.println(
@@ -1967,6 +1617,9 @@ public class Main {
             );
 
             System.out.println();
+
+            List<TopicProgress> insufficient =
+                    summary.getInsufficientDataTopics();
 
             if (insufficient.isEmpty()) {
 
@@ -1997,6 +1650,625 @@ public class Main {
                     "Progress could not be loaded: "
                             + e.getMessage()
             );
+        }
+    }
+
+    // =====================================================
+    // F10 - ADAPT / PREVIEW
+    // =====================================================
+
+    private static void adaptStudyPlan(
+            Scanner scanner,
+            AgentController controller,
+            StudyRepository repository,
+            Course course) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== ADAPT STUDY PLAN ====="
+        );
+
+        StudyPlan current =
+                repository.findLatestPlanByCourse(
+                        course.id()
+                );
+
+        if (current == null) {
+
+            System.out.println();
+
+            System.out.println(
+                    "No saved study plan exists."
+            );
+
+            System.out.println(
+                    "Generate a study plan first "
+                            + "using option 5."
+            );
+
+            return;
+        }
+
+        System.out.println();
+
+        System.out.println(
+                "Current saved plan:"
+        );
+
+        printStudyPlan(
+                current
+        );
+
+        try {
+
+            System.out.println();
+
+            System.out.println(
+                    "Enter the revised constraints."
+            );
+
+            LocalDate examDate =
+                    readExamDate(
+                            scanner
+                    );
+
+            List<AvailabilitySlot> availability =
+                    readAvailability(
+                            scanner,
+                            examDate
+                    );
+
+            SchedulingStrategy strategy =
+                    readStrategy(
+                            scanner
+                    );
+
+            System.out.println();
+
+            System.out.println(
+                    "Generating revision preview..."
+            );
+
+            StudyPlan preview =
+                    controller.previewRevision(
+                            course.id(),
+                            examDate,
+                            availability,
+                            strategy
+                    );
+
+            System.out.println();
+
+            System.out.println(
+                    "===== REVISION PREVIEW ====="
+            );
+
+            printStudyPlan(
+                    preview
+            );
+
+            if (!preview.isFeasible()) {
+
+                System.out.println();
+
+                System.out.println(
+                        "The revision is not feasible."
+                );
+
+                System.out.println(
+                        "Nothing was saved."
+                );
+
+                return;
+            }
+
+            System.out.println();
+
+            System.out.println(
+                    "PREVIEW ONLY."
+            );
+
+            System.out.println(
+                    "The saved plan has NOT changed."
+            );
+
+            System.out.println(
+                    "Choose option 11 to confirm "
+                            + "or option 12 to reject."
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Adaptation failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    // =====================================================
+    // F10 - CONFIRM
+    // =====================================================
+
+    private static void confirmPlanRevision(
+            AgentController controller) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== CONFIRM PLAN REVISION ====="
+        );
+
+        if (!controller.hasPendingRevision()) {
+
+            System.out.println();
+
+            System.out.println(
+                    "There is no pending revision."
+            );
+
+            return;
+        }
+
+        try {
+
+            StudyPlan saved =
+                    controller.confirmRevision();
+
+            System.out.println();
+
+            System.out.println(
+                    "Revision confirmed and saved."
+            );
+
+            printStudyPlan(
+                    saved
+            );
+
+            System.out.println();
+
+            System.out.println(
+                    "One-level undo is now available."
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Confirmation failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    // =====================================================
+    // F10 - REJECT
+    // =====================================================
+
+    private static void rejectPlanRevision(
+            AgentController controller) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== REJECT PLAN REVISION ====="
+        );
+
+        if (!controller.hasPendingRevision()) {
+
+            System.out.println();
+
+            System.out.println(
+                    "There is no pending revision."
+            );
+
+            return;
+        }
+
+        controller.rejectRevision();
+
+        System.out.println();
+
+        System.out.println(
+                "Revision rejected."
+        );
+
+        System.out.println(
+                "The saved plan was not changed."
+        );
+    }
+
+    // =====================================================
+    // F10 - UNDO
+    // =====================================================
+
+    private static void undoPlanRevision(
+            AgentController controller) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== UNDO LAST PLAN REVISION ====="
+        );
+
+        if (!controller.canUndo()) {
+
+            System.out.println();
+
+            System.out.println(
+                    "There is no confirmed revision "
+                            + "available to undo."
+            );
+
+            return;
+        }
+
+        try {
+
+            StudyPlan restored =
+                    controller.undoLastRevision();
+
+            System.out.println();
+
+            System.out.println(
+                    "Revision successfully undone."
+            );
+
+            System.out.println(
+                    "The previous schedule was restored "
+                            + "as a new version."
+            );
+
+            printStudyPlan(
+                    restored
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Undo failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    // =====================================================
+    // SHOW LATEST PLAN
+    // =====================================================
+
+    private static void showLatestPlan(
+            StudyRepository repository,
+            Course course) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== LATEST STUDY PLAN ====="
+        );
+
+        StudyPlan plan =
+                repository.findLatestPlanByCourse(
+                        course.id()
+                );
+
+        if (plan == null) {
+
+            System.out.println();
+
+            System.out.println(
+                    "No saved study plan exists."
+            );
+
+            return;
+        }
+
+        printStudyPlan(
+                plan
+        );
+    }
+
+    // =====================================================
+    // SHARED PLAN INPUT
+    // =====================================================
+
+    private static LocalDate readExamDate(
+            Scanner scanner) {
+
+        System.out.print(
+                "Exam date (YYYY-MM-DD): "
+        );
+
+        try {
+
+            LocalDate date =
+                    LocalDate.parse(
+                            scanner.nextLine()
+                                    .trim()
+                    );
+
+            if (!date.isAfter(
+                    LocalDate.now())) {
+
+                throw new IllegalArgumentException(
+                        "Exam date must be in the future."
+                );
+            }
+
+            return date;
+
+        } catch (DateTimeParseException e) {
+
+            throw new IllegalArgumentException(
+                    "Date must use YYYY-MM-DD."
+            );
+        }
+    }
+
+    private static List<AvailabilitySlot>
+            readAvailability(
+                    Scanner scanner,
+                    LocalDate examDate) {
+
+        System.out.print(
+                "Number of available study days: "
+        );
+
+        int numberOfDays;
+
+        try {
+
+            numberOfDays =
+                    Integer.parseInt(
+                            scanner.nextLine()
+                                    .trim()
+                    );
+
+        } catch (NumberFormatException e) {
+
+            throw new IllegalArgumentException(
+                    "Please enter a valid number."
+            );
+        }
+
+        if (numberOfDays <= 0) {
+
+            throw new IllegalArgumentException(
+                    "At least one study day is required."
+            );
+        }
+
+        List<AvailabilitySlot> availability =
+                new ArrayList<>();
+
+        for (int i = 1;
+             i <= numberOfDays;
+             i++) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Availability "
+                            + i
+                            + ":"
+            );
+
+            System.out.print(
+                    "Date (YYYY-MM-DD): "
+            );
+
+            LocalDate date;
+
+            try {
+
+                date =
+                        LocalDate.parse(
+                                scanner.nextLine()
+                                        .trim()
+                        );
+
+            } catch (DateTimeParseException e) {
+
+                throw new IllegalArgumentException(
+                        "Date must use YYYY-MM-DD."
+                );
+            }
+
+            if (date.isBefore(
+                    LocalDate.now())) {
+
+                throw new IllegalArgumentException(
+                        "Availability cannot be in the past."
+                );
+            }
+
+            if (!date.isBefore(
+                    examDate)) {
+
+                throw new IllegalArgumentException(
+                        "Availability must be "
+                                + "before the exam date."
+                );
+            }
+
+            System.out.print(
+                    "Available minutes: "
+            );
+
+            int minutes;
+
+            try {
+
+                minutes =
+                        Integer.parseInt(
+                                scanner.nextLine()
+                                        .trim()
+                        );
+
+            } catch (NumberFormatException e) {
+
+                throw new IllegalArgumentException(
+                        "Available minutes "
+                                + "must be a number."
+                );
+            }
+
+            if (minutes <= 0) {
+
+                throw new IllegalArgumentException(
+                        "Available minutes "
+                                + "must be positive."
+                );
+            }
+
+            availability.add(
+                    new AvailabilitySlot(
+                            date,
+                            minutes
+                    )
+            );
+        }
+
+        return availability;
+    }
+
+    private static SchedulingStrategy readStrategy(
+            Scanner scanner) {
+
+        System.out.println();
+
+        System.out.println(
+                "Choose scheduling strategy:"
+        );
+
+        System.out.println(
+                "1 - Deadline"
+        );
+
+        System.out.println(
+                "2 - Weak Topic"
+        );
+
+        System.out.print(
+                "Strategy: "
+        );
+
+        String choice =
+                scanner.nextLine()
+                        .trim();
+
+        return switch (choice) {
+
+            case "1" ->
+                    new DeadlineStrategy();
+
+            case "2" ->
+                    new WeakTopicStrategy();
+
+            default ->
+                    throw new IllegalArgumentException(
+                            "Invalid scheduling strategy."
+                    );
+        };
+    }
+
+    // =====================================================
+    // PRINT STUDY PLAN
+    // =====================================================
+
+    private static void printStudyPlan(
+            StudyPlan plan) {
+
+        System.out.println();
+
+        System.out.println(
+                "Plan ID: "
+                        + plan.getId()
+        );
+
+        System.out.println(
+                "Version: "
+                        + plan.getVersion()
+        );
+
+        System.out.println(
+                "Exam date: "
+                        + plan.getExamDate()
+        );
+
+        System.out.println(
+                "Strategy: "
+                        + plan.getStrategyName()
+        );
+
+        System.out.println();
+
+        if (plan.getSessions()
+                .isEmpty()) {
+
+            System.out.println(
+                    "No sessions could be scheduled."
+            );
+
+        } else {
+
+            System.out.println(
+                    "Scheduled sessions:"
+            );
+
+            for (StudySession session :
+                    plan.getSessions()) {
+
+                System.out.println(
+                        "- "
+                                + session.getDate()
+                                + " | "
+                                + session.getTopic()
+                                + " | "
+                                + session.getMinutes()
+                                + " min"
+                );
+            }
+        }
+
+        System.out.println();
+
+        if (plan.isFeasible()) {
+
+            System.out.println(
+                    "Plan status: FEASIBLE"
+            );
+
+        } else {
+
+            System.out.println(
+                    "Plan status: "
+                            + "INSUFFICIENT CAPACITY"
+            );
+
+            if (!plan.getUnscheduledTopics()
+                    .isEmpty()) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Unscheduled work:"
+                );
+
+                for (String topic :
+                        plan.getUnscheduledTopics()) {
+
+                    System.out.println(
+                            "- "
+                                    + topic
+                    );
+                }
+            }
         }
     }
 
@@ -2037,7 +2309,8 @@ public class Main {
                     "- "
                             + material.getTitle()
                             + " | "
-                            + material.chunks()
+                            + material
+                                    .chunks()
                                     .size()
                             + " chunks"
             );

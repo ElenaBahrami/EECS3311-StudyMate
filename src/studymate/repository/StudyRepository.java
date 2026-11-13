@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -47,6 +48,11 @@ public class StudyRepository {
             }
 
             createTables();
+
+            // F10:
+            // Older StudyMate databases were created
+            // before study-plan versioning existed.
+            ensureStudyPlanVersionColumn();
 
         } catch (SQLException e) {
 
@@ -107,6 +113,7 @@ public class StudyRepository {
                     course_id TEXT NOT NULL,
                     exam_date TEXT NOT NULL,
                     strategy_name TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
 
                     FOREIGN KEY(course_id)
                         REFERENCES courses(id)
@@ -283,6 +290,53 @@ public class StudyRepository {
     }
 
     // =====================================================
+    // F10 - MIGRATE OLD DATABASES FOR PLAN VERSIONING
+    // =====================================================
+
+    private void ensureStudyPlanVersionColumn()
+            throws SQLException {
+
+        boolean hasVersionColumn =
+                false;
+
+        try (Statement statement =
+                     connection.createStatement();
+
+             ResultSet result =
+                     statement.executeQuery(
+                             "PRAGMA table_info(study_plans);"
+                     )) {
+
+            while (result.next()) {
+
+                if ("version".equalsIgnoreCase(
+                        result.getString("name"))) {
+
+                    hasVersionColumn =
+                            true;
+
+                    break;
+                }
+            }
+        }
+
+        if (!hasVersionColumn) {
+
+            try (Statement statement =
+                         connection.createStatement()) {
+
+                statement.execute(
+                        """
+                        ALTER TABLE study_plans
+                        ADD COLUMN version
+                        INTEGER NOT NULL DEFAULT 1;
+                        """
+                );
+            }
+        }
+    }
+
+    // =====================================================
     // COURSES
     // =====================================================
 
@@ -412,13 +466,16 @@ public class StudyRepository {
                 findCourseByName(name);
 
         if (existing != null) {
+
             return existing;
         }
 
         Course course =
                 new Course(name);
 
-        return saveCourse(course);
+        return saveCourse(
+                course
+        );
     }
 
     // =====================================================
@@ -565,7 +622,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
                 return material;
             }
@@ -609,7 +668,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
                 return material;
             }
@@ -625,9 +686,8 @@ public class StudyRepository {
         return null;
     }
 
-    public List<Material>
-            getMaterialsByCourse(
-                    UUID courseId) {
+    public List<Material> getMaterialsByCourse(
+            UUID courseId) {
 
         List<Material> materials =
                 new ArrayList<>();
@@ -658,9 +718,13 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
-                materials.add(material);
+                materials.add(
+                        material
+                );
             }
 
         } catch (SQLException e) {
@@ -674,8 +738,7 @@ public class StudyRepository {
         return materials;
     }
 
-    public List<Material>
-            getAllMaterials() {
+    public List<Material> getAllMaterials() {
 
         List<Material> materials =
                 new ArrayList<>();
@@ -700,9 +763,13 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
-                materials.add(material);
+                materials.add(
+                        material
+                );
             }
 
         } catch (SQLException e) {
@@ -791,13 +858,15 @@ public class StudyRepository {
                                 )
                         );
 
-                material.addChunk(chunk);
+                material.addChunk(
+                        chunk
+                );
             }
         }
     }
 
     // =====================================================
-    // F05 - STUDY PLANS
+    // F05 / F10 - STUDY PLANS
     // =====================================================
 
     public StudyPlan savePlan(
@@ -828,20 +897,34 @@ public class StudyRepository {
         String planSql =
                 """
                 INSERT INTO study_plans
-                (id, course_id, exam_date, strategy_name)
-                VALUES (?, ?, ?, ?);
+                (
+                    id,
+                    course_id,
+                    exam_date,
+                    strategy_name,
+                    version
+                )
+                VALUES (?, ?, ?, ?, ?);
                 """;
 
         String sessionSql =
                 """
                 INSERT INTO study_sessions
-                (plan_id, session_order, date, topic, minutes)
+                (
+                    plan_id,
+                    session_order,
+                    date,
+                    topic,
+                    minutes
+                )
                 VALUES (?, ?, ?, ?, ?);
                 """;
 
         try {
 
-            connection.setAutoCommit(false);
+            connection.setAutoCommit(
+                    false
+            );
 
             try (PreparedStatement statement =
                          connection.prepareStatement(
@@ -871,53 +954,18 @@ public class StudyRepository {
                         plan.getStrategyName()
                 );
 
+                statement.setInt(
+                        5,
+                        plan.getVersion()
+                );
+
                 statement.executeUpdate();
             }
 
-            try (PreparedStatement statement =
-                         connection.prepareStatement(
-                                 sessionSql
-                         )) {
-
-                int order = 1;
-
-                for (StudySession session :
-                        plan.getSessions()) {
-
-                    statement.setString(
-                            1,
-                            plan.getId()
-                                    .toString()
-                    );
-
-                    statement.setInt(
-                            2,
-                            order
-                    );
-
-                    statement.setString(
-                            3,
-                            session.getDate()
-                                    .toString()
-                    );
-
-                    statement.setString(
-                            4,
-                            session.getTopic()
-                    );
-
-                    statement.setInt(
-                            5,
-                            session.getMinutes()
-                    );
-
-                    statement.addBatch();
-
-                    order++;
-                }
-
-                statement.executeBatch();
-            }
+            insertStudySessions(
+                    plan,
+                    sessionSql
+            );
 
             connection.commit();
 
@@ -938,9 +986,477 @@ public class StudyRepository {
         } finally {
 
             try {
-                connection.setAutoCommit(true);
+
+                connection.setAutoCommit(
+                        true
+                );
+
             } catch (SQLException ignored) {
             }
+        }
+    }
+
+    // =====================================================
+    // F10 - LOAD SAVED STUDY PLAN
+    // =====================================================
+
+    public StudyPlan findPlan(
+            UUID planId) {
+
+        if (planId == null) {
+
+            return null;
+        }
+
+        String sql =
+                """
+                SELECT
+                    id,
+                    course_id,
+                    exam_date,
+                    strategy_name,
+                    version
+                FROM study_plans
+                WHERE id = ?;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    planId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            if (!result.next()) {
+
+                return null;
+            }
+
+            UUID id =
+                    UUID.fromString(
+                            result.getString(
+                                    "id"
+                            )
+                    );
+
+            UUID courseId =
+                    UUID.fromString(
+                            result.getString(
+                                    "course_id"
+                            )
+                    );
+
+            LocalDate examDate =
+                    LocalDate.parse(
+                            result.getString(
+                                    "exam_date"
+                            )
+                    );
+
+            String strategyName =
+                    result.getString(
+                            "strategy_name"
+                    );
+
+            int version =
+                    result.getInt(
+                            "version"
+                    );
+
+            List<StudySession> sessions =
+                    loadStudySessions(
+                            id
+                    );
+
+            return new StudyPlan(
+                    id,
+                    courseId,
+                    examDate,
+                    strategyName,
+                    sessions,
+                    List.of(),
+                    version
+            );
+
+        } catch (SQLException e) {
+
+            throw new RuntimeException(
+                    "Unable to load study plan.",
+                    e
+            );
+        }
+    }
+
+    // =====================================================
+    // F10 - FIND MOST RECENT PLAN FOR COURSE
+    // =====================================================
+
+    public StudyPlan findLatestPlanByCourse(
+            UUID courseId) {
+
+        if (courseId == null) {
+
+            throw new IllegalArgumentException(
+                    "Course ID is required."
+            );
+        }
+
+        if (findCourse(courseId)
+                == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        String sql =
+                """
+                SELECT id
+                FROM study_plans
+                WHERE course_id = ?
+                ORDER BY rowid DESC
+                LIMIT 1;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    courseId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            if (!result.next()) {
+
+                return null;
+            }
+
+            return findPlan(
+                    UUID.fromString(
+                            result.getString(
+                                    "id"
+                            )
+                    )
+            );
+
+        } catch (SQLException e) {
+
+            throw new RuntimeException(
+                    "Unable to load latest study plan.",
+                    e
+            );
+        }
+    }
+
+    // =====================================================
+    // F10 - VERSION-CHECKED PLAN REPLACEMENT
+    // =====================================================
+
+    public StudyPlan replacePlan(
+            StudyPlan replacement,
+            int expectedVersion) {
+
+        if (replacement == null) {
+
+            throw new IllegalArgumentException(
+                    "Replacement plan is required."
+            );
+        }
+
+        if (!replacement.isFeasible()) {
+
+            throw new IllegalArgumentException(
+                    "Cannot save an infeasible revision."
+            );
+        }
+
+        StudyPlan current =
+                findPlan(
+                        replacement.getId()
+                );
+
+        if (current == null) {
+
+            throw new IllegalArgumentException(
+                    "Study plan was not found."
+            );
+        }
+
+        if (!current.getCourseId()
+                .equals(
+                        replacement.getCourseId()
+                )) {
+
+            throw new IllegalArgumentException(
+                    "Replacement plan belongs "
+                            + "to a different course."
+            );
+        }
+
+        if (current.getVersion()
+                != expectedVersion) {
+
+            throw new IllegalStateException(
+                    "Plan version conflict. "
+                            + "Expected version "
+                            + expectedVersion
+                            + " but found version "
+                            + current.getVersion()
+                            + "."
+            );
+        }
+
+        if (replacement.getVersion()
+                != expectedVersion + 1) {
+
+            throw new IllegalArgumentException(
+                    "Replacement plan must be "
+                            + "the next version."
+            );
+        }
+
+        String updatePlanSql =
+                """
+                UPDATE study_plans
+                SET
+                    exam_date = ?,
+                    strategy_name = ?,
+                    version = ?
+                WHERE id = ?
+                  AND version = ?;
+                """;
+
+        String deleteSessionsSql =
+                """
+                DELETE FROM study_sessions
+                WHERE plan_id = ?;
+                """;
+
+        String insertSessionSql =
+                """
+                INSERT INTO study_sessions
+                (
+                    plan_id,
+                    session_order,
+                    date,
+                    topic,
+                    minutes
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """;
+
+        try {
+
+            connection.setAutoCommit(
+                    false
+            );
+
+            int updatedRows;
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 updatePlanSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        replacement
+                                .getExamDate()
+                                .toString()
+                );
+
+                statement.setString(
+                        2,
+                        replacement
+                                .getStrategyName()
+                );
+
+                statement.setInt(
+                        3,
+                        replacement
+                                .getVersion()
+                );
+
+                statement.setString(
+                        4,
+                        replacement
+                                .getId()
+                                .toString()
+                );
+
+                statement.setInt(
+                        5,
+                        expectedVersion
+                );
+
+                updatedRows =
+                        statement.executeUpdate();
+            }
+
+            if (updatedRows != 1) {
+
+                connection.rollback();
+
+                throw new IllegalStateException(
+                        "Plan version conflict."
+                );
+            }
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 deleteSessionsSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        replacement
+                                .getId()
+                                .toString()
+                );
+
+                statement.executeUpdate();
+            }
+
+            insertStudySessions(
+                    replacement,
+                    insertSessionSql
+            );
+
+            connection.commit();
+
+            return replacement;
+
+        } catch (SQLException e) {
+
+            try {
+                connection.rollback();
+            } catch (SQLException ignored) {
+            }
+
+            throw new RuntimeException(
+                    "Unable to save plan revision.",
+                    e
+            );
+
+        } finally {
+
+            try {
+
+                connection.setAutoCommit(
+                        true
+                );
+
+            } catch (SQLException ignored) {
+            }
+        }
+    }
+
+    private List<StudySession> loadStudySessions(
+            UUID planId)
+            throws SQLException {
+
+        List<StudySession> sessions =
+                new ArrayList<>();
+
+        String sql =
+                """
+                SELECT
+                    date,
+                    topic,
+                    minutes
+                FROM study_sessions
+                WHERE plan_id = ?
+                ORDER BY session_order;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    planId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            while (result.next()) {
+
+                sessions.add(
+                        new StudySession(
+                                LocalDate.parse(
+                                        result.getString(
+                                                "date"
+                                        )
+                                ),
+                                result.getString(
+                                        "topic"
+                                ),
+                                result.getInt(
+                                        "minutes"
+                                )
+                        )
+                );
+            }
+        }
+
+        return sessions;
+    }
+
+    private void insertStudySessions(
+            StudyPlan plan,
+            String sql)
+            throws SQLException {
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            int order =
+                    1;
+
+            for (StudySession session :
+                    plan.getSessions()) {
+
+                statement.setString(
+                        1,
+                        plan.getId()
+                                .toString()
+                );
+
+                statement.setInt(
+                        2,
+                        order
+                );
+
+                statement.setString(
+                        3,
+                        session.getDate()
+                                .toString()
+                );
+
+                statement.setString(
+                        4,
+                        session.getTopic()
+                );
+
+                statement.setInt(
+                        5,
+                        session.getMinutes()
+                );
+
+                statement.addBatch();
+
+                order++;
+            }
+
+            statement.executeBatch();
         }
     }
 
@@ -990,7 +1506,9 @@ public class StudyRepository {
 
         try {
 
-            connection.setAutoCommit(false);
+            connection.setAutoCommit(
+                    false
+            );
 
             try (PreparedStatement statement =
                          connection.prepareStatement(
@@ -1083,7 +1601,11 @@ public class StudyRepository {
         } finally {
 
             try {
-                connection.setAutoCommit(true);
+
+                connection.setAutoCommit(
+                        true
+                );
+
             } catch (SQLException ignored) {
             }
         }
@@ -1160,7 +1682,9 @@ public class StudyRepository {
 
         try {
 
-            connection.setAutoCommit(false);
+            connection.setAutoCommit(
+                    false
+            );
 
             try (PreparedStatement statement =
                          connection.prepareStatement(
@@ -1202,7 +1726,8 @@ public class StudyRepository {
                                  questionSql
                          )) {
 
-                int order = 1;
+                int order =
+                        1;
 
                 for (Question question :
                         quiz.getQuestions()) {
@@ -1296,7 +1821,11 @@ public class StudyRepository {
         } finally {
 
             try {
-                connection.setAutoCommit(true);
+
+                connection.setAutoCommit(
+                        true
+                );
+
             } catch (SQLException ignored) {
             }
         }
@@ -1310,6 +1839,7 @@ public class StudyRepository {
             UUID quizId) {
 
         if (quizId == null) {
+
             return null;
         }
 
@@ -1339,12 +1869,15 @@ public class StudyRepository {
                     statement.executeQuery();
 
             if (!result.next()) {
+
                 return null;
             }
 
             UUID id =
                     UUID.fromString(
-                            result.getString("id")
+                            result.getString(
+                                    "id"
+                            )
                     );
 
             UUID courseId =
@@ -1486,6 +2019,7 @@ public class StudyRepository {
             UUID attemptId) {
 
         if (attemptId == null) {
+
             return null;
         }
 
@@ -1513,12 +2047,15 @@ public class StudyRepository {
                     statement.executeQuery();
 
             if (!result.next()) {
+
                 return null;
             }
 
             UUID id =
                     UUID.fromString(
-                            result.getString("id")
+                            result.getString(
+                                    "id"
+                            )
                     );
 
             UUID quizId =
@@ -1554,9 +2091,8 @@ public class StudyRepository {
         }
     }
 
-    private List<QuestionResult>
-            loadAttemptResults(
-                    UUID attemptId)
+    private List<QuestionResult> loadAttemptResults(
+            UUID attemptId)
             throws SQLException {
 
         List<QuestionResult> results =
@@ -1738,7 +2274,8 @@ public class StudyRepository {
                                  resultSql
                          )) {
 
-                int order = 1;
+                int order =
+                        1;
 
                 for (QuestionResult result :
                         attempt.getResults()) {
@@ -1828,9 +2365,11 @@ public class StudyRepository {
         } finally {
 
             try {
+
                 connection.setAutoCommit(
                         true
                 );
+
             } catch (SQLException ignored) {
             }
         }
@@ -1850,7 +2389,8 @@ public class StudyRepository {
             );
         }
 
-        if (findCourse(courseId) == null) {
+        if (findCourse(courseId)
+                == null) {
 
             throw new IllegalArgumentException(
                     "Unknown course ID."
