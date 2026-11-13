@@ -1,0 +1,8 @@
+studymate.db
+.env
+.env.*
+config.local.json
+target/
+bin/
+*.class
+.DS_Store

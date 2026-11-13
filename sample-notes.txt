@@ -1,0 +1,5 @@
+Software design helps organize complex software systems.
+
+UML is used to model software structure and behavior.
+
+Design patterns provide reusable solutions to common software design problems.
