@@ -8,14 +8,17 @@ import studymate.model.Question;
 import studymate.model.QuestionResult;
 import studymate.model.Quiz;
 import studymate.model.QuizAttempt;
+import studymate.progress.ProgressTracker;
 import studymate.repository.StudyRepository;
 
 public class QuizService {
 
     private final StudyRepository repository;
+    private final ProgressTracker progressTracker;
 
     public QuizService(
-            StudyRepository repository) {
+            StudyRepository repository,
+            ProgressTracker progressTracker) {
 
         if (repository == null) {
 
@@ -24,11 +27,23 @@ public class QuizService {
             );
         }
 
-        this.repository = repository;
+        if (progressTracker == null) {
+
+            throw new IllegalArgumentException(
+                    "Progress tracker is required."
+            );
+        }
+
+        this.repository =
+                repository;
+
+        this.progressTracker =
+                progressTracker;
     }
 
     // =====================================================
     // F08 - DETERMINISTIC QUIZ GRADING
+    // F09 - NOTIFY PROGRESS AFTER COMMITTED ATTEMPT
     // =====================================================
 
     public QuizAttempt grade(
@@ -53,9 +68,11 @@ public class QuizService {
         // -------------------------------------------------
         // IDEMPOTENCY
         // -------------------------------------------------
-        // If this exact attempt ID was already submitted,
-        // return the existing result instead of grading
-        // or saving it again.
+        // If this exact attempt was already submitted,
+        // return the stored result immediately.
+        //
+        // Progress is NOT notified again, so replaying an
+        // attempt does not create another observation.
         // -------------------------------------------------
 
         QuizAttempt existing =
@@ -129,7 +146,9 @@ public class QuizService {
             Integer selected =
                     selectedAnswers.get(i);
 
-            // null represents a confirmed skipped answer.
+            // null means a confirmed skipped answer.
+            // It remains a graded question worth zero
+            // unless its answer is actually selected.
             if (selected != null
                     && (selected < 0
                     || selected > 3)) {
@@ -163,8 +182,24 @@ public class QuizService {
                         results
                 );
 
-        return repository.recordAttempt(
-                attempt
+        QuizAttempt savedAttempt =
+                repository.recordAttempt(
+                        attempt
+                );
+
+        // -------------------------------------------------
+        // OBSERVER / PROGRESS UPDATE
+        // -------------------------------------------------
+        // Only a NEW committed attempt reaches this point.
+        // ProgressTracker reloads committed attempts,
+        // recalculates deterministic topic progress,
+        // and notifies registered ProgressListeners.
+        // -------------------------------------------------
+
+        progressTracker.record(
+                quiz.getCourseId()
         );
+
+        return savedAttempt;
     }
 }

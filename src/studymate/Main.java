@@ -20,15 +20,18 @@ import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.Material;
+import studymate.model.ProgressSummary;
 import studymate.model.Question;
 import studymate.model.QuestionResult;
 import studymate.model.Quiz;
 import studymate.model.QuizAttempt;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
+import studymate.model.TopicProgress;
 import studymate.planning.DeadlineStrategy;
 import studymate.planning.SchedulingStrategy;
 import studymate.planning.WeakTopicStrategy;
+import studymate.progress.ProgressTracker;
 import studymate.repository.StudyRepository;
 import studymate.service.MaterialService;
 import studymate.service.QuizService;
@@ -84,9 +87,31 @@ public class Main {
                         repository
                 );
 
+        // =================================================
+        // F09 - PROGRESS TRACKER / OBSERVER
+        // =================================================
+
+        ProgressTracker progressTracker =
+                new ProgressTracker(
+                        repository
+                );
+
+        progressTracker.addListener(
+                summary -> {
+
+                    System.out.println();
+
+                    System.out.println(
+                            "Progress updated after "
+                                    + "committed quiz attempt."
+                    );
+                }
+        );
+
         QuizService quizService =
                 new QuizService(
-                        repository
+                        repository,
+                        progressTracker
                 );
 
         Scanner scanner =
@@ -161,6 +186,12 @@ public class Main {
                         );
 
                 case "9" ->
+                        viewProgress(
+                                progressTracker,
+                                course
+                        );
+
+                case "10" ->
                         showMaterials(
                                 repository,
                                 course
@@ -240,7 +271,11 @@ public class Main {
         );
 
         System.out.println(
-                "9 - Show saved materials"
+                "9 - View progress"
+        );
+
+        System.out.println(
+                "10 - Show saved materials"
         );
 
         System.out.println(
@@ -1018,7 +1053,7 @@ public class Main {
     }
 
     // =====================================================
-    // F07 - GENERATE MULTIPLE-CHOICE QUIZ
+    // F07 - GENERATE QUIZ
     // =====================================================
 
     private static void generateQuiz(
@@ -1642,9 +1677,6 @@ public class Main {
             }
         }
 
-        // AI explanations are requested only for a new
-        // submission. Replayed attempts return the existing
-        // deterministic result without another AI call.
         if (hasWrongAnswer
                 && newSubmission) {
 
@@ -1809,6 +1841,163 @@ public class Main {
 
             default -> "?";
         };
+    }
+
+    // =====================================================
+    // F09 - VIEW PROGRESS
+    // =====================================================
+
+    private static void viewProgress(
+            ProgressTracker progressTracker,
+            Course course) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== COURSE PROGRESS ====="
+        );
+
+        try {
+
+            ProgressSummary summary =
+                    progressTracker.analyse(
+                            course.id()
+                    );
+
+            if (summary.isEmpty()) {
+
+                System.out.println();
+
+                System.out.println(
+                        "No quiz attempts have been "
+                                + "recorded yet."
+                );
+
+                System.out.println(
+                        "No progress judgement was made."
+                );
+
+                return;
+            }
+
+            System.out.println();
+
+            System.out.println(
+                    "Topic results:"
+            );
+
+            System.out.println();
+
+            for (TopicProgress topic :
+                    summary.getTopics()) {
+
+                System.out.println(
+                        "Topic: "
+                                + topic.getTopic()
+                );
+
+                System.out.println(
+                        "Correct: "
+                                + topic.getCorrectCount()
+                                + " / "
+                                + topic.getGradedCount()
+                );
+
+                System.out.printf(
+                        "Accuracy: %.2f%%%n",
+                        topic.getAccuracyPercent()
+                );
+
+                System.out.println(
+                        "Evidence count: "
+                                + topic.getGradedCount()
+                );
+
+                System.out.println(
+                        "Status: "
+                                + topic.getStatus()
+                );
+
+                System.out.println();
+            }
+
+            List<TopicProgress> weakTopics =
+                    summary.getWeakTopics();
+
+            System.out.println(
+                    "===== WEAK TOPICS ====="
+            );
+
+            System.out.println();
+
+            if (weakTopics.isEmpty()) {
+
+                System.out.println(
+                        "No topics currently meet "
+                                + "the weak-topic rule."
+                );
+
+            } else {
+
+                int rank = 1;
+
+                for (TopicProgress topic :
+                        weakTopics) {
+
+                    System.out.printf(
+                            "%d. %s - %.2f%% (%d graded)%n",
+                            rank,
+                            topic.getTopic(),
+                            topic.getAccuracyPercent(),
+                            topic.getGradedCount()
+                    );
+
+                    rank++;
+                }
+            }
+
+            List<TopicProgress> insufficient =
+                    summary
+                            .getInsufficientDataTopics();
+
+            System.out.println();
+
+            System.out.println(
+                    "===== INSUFFICIENT DATA ====="
+            );
+
+            System.out.println();
+
+            if (insufficient.isEmpty()) {
+
+                System.out.println(
+                        "No topics have insufficient data."
+                );
+
+            } else {
+
+                for (TopicProgress topic :
+                        insufficient) {
+
+                    System.out.println(
+                            "- "
+                                    + topic.getTopic()
+                                    + " | "
+                                    + topic.getGradedCount()
+                                    + " graded observation(s)"
+                    );
+                }
+            }
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Progress could not be loaded: "
+                            + e.getMessage()
+            );
+        }
     }
 
     // =====================================================

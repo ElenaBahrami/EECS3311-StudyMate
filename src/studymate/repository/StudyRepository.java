@@ -1810,9 +1810,6 @@ public class StudyRepository {
             } catch (SQLException ignored) {
             }
 
-            // If this attempt ID was inserted by an
-            // earlier/repeated submission, return it
-            // instead of adding another observation.
             QuizAttempt repeated =
                     findAttempt(
                             attempt.getId()
@@ -1837,5 +1834,89 @@ public class StudyRepository {
             } catch (SQLException ignored) {
             }
         }
+    }
+
+    // =====================================================
+    // F09 - LOAD COMMITTED COURSE ATTEMPTS
+    // =====================================================
+
+    public List<QuizAttempt> loadAttempts(
+            UUID courseId) {
+
+        if (courseId == null) {
+
+            throw new IllegalArgumentException(
+                    "Course ID is required."
+            );
+        }
+
+        if (findCourse(courseId) == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        List<QuizAttempt> attempts =
+                new ArrayList<>();
+
+        String sql =
+                """
+                SELECT qa.id
+                FROM quiz_attempts qa
+                JOIN quizzes q
+                    ON qa.quiz_id = q.id
+                WHERE q.course_id = ?
+                ORDER BY qa.rowid;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    courseId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            while (result.next()) {
+
+                UUID attemptId =
+                        UUID.fromString(
+                                result.getString(
+                                        "id"
+                                )
+                        );
+
+                QuizAttempt attempt =
+                        findAttempt(
+                                attemptId
+                        );
+
+                if (attempt == null) {
+
+                    throw new IllegalStateException(
+                            "Stored quiz attempt "
+                                    + attemptId
+                                    + " could not be reconstructed."
+                    );
+                }
+
+                attempts.add(
+                        attempt
+                );
+            }
+
+        } catch (SQLException e) {
+
+            throw new RuntimeException(
+                    "Unable to load course quiz attempts.",
+                    e
+            );
+        }
+
+        return attempts;
     }
 }
