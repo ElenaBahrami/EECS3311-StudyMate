@@ -12,6 +12,8 @@ import studymate.model.AvailabilitySlot;
 import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
+import studymate.model.Question;
+import studymate.model.Quiz;
 import studymate.model.StudyPlan;
 import studymate.model.StudyTopic;
 import studymate.planning.SchedulingStrategy;
@@ -246,7 +248,8 @@ public class LearningAgent {
                         )
                 );
 
-        if (retrieval.getSourceIds().isEmpty()) {
+        if (retrieval.getSourceIds()
+                .isEmpty()) {
 
             throw new IllegalStateException(
                     "No course evidence is available."
@@ -379,7 +382,8 @@ public class LearningAgent {
                         )
                 );
 
-        if (retrieval.getSourceIds().isEmpty()) {
+        if (retrieval.getSourceIds()
+                .isEmpty()) {
 
             return new FlashcardDeck(
                     courseId,
@@ -456,7 +460,8 @@ public class LearningAgent {
                         cards
                 );
 
-        if (!deck.getCards().isEmpty()) {
+        if (!deck.getCards()
+                .isEmpty()) {
 
             repository.saveFlashcardDeck(
                     deck
@@ -464,6 +469,288 @@ public class LearningAgent {
         }
 
         return deck;
+    }
+
+    // =====================================================
+    // F07 - GENERATE MULTIPLE-CHOICE QUIZ
+    // =====================================================
+
+    public Quiz generateQuiz(
+            UUID courseId,
+            String topic,
+            String difficulty,
+            int requestedCount)
+            throws Exception {
+
+        if (courseId == null) {
+
+            throw new IllegalArgumentException(
+                    "Course ID is required."
+            );
+        }
+
+        if (repository.findCourse(courseId)
+                == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        if (topic == null
+                || topic.isBlank()) {
+
+            throw new IllegalArgumentException(
+                    "Quiz topic cannot be empty."
+            );
+        }
+
+        if (difficulty == null
+                || difficulty.isBlank()) {
+
+            throw new IllegalArgumentException(
+                    "Quiz difficulty is required."
+            );
+        }
+
+        String normalizedDifficulty =
+                difficulty.trim()
+                        .toLowerCase();
+
+        if (!normalizedDifficulty.equals("easy")
+                && !normalizedDifficulty.equals("medium")
+                && !normalizedDifficulty.equals("hard")) {
+
+            throw new IllegalArgumentException(
+                    "Difficulty must be Easy, Medium, or Hard."
+            );
+        }
+
+        if (requestedCount < 1
+                || requestedCount > 20) {
+
+            throw new IllegalArgumentException(
+                    "Quiz count must be between 1 and 20."
+            );
+        }
+
+        ToolResult retrieval =
+                tools.execute(
+                        "retrieve",
+                        Map.of(
+                                "courseId",
+                                courseId.toString(),
+                                "query",
+                                topic
+                        )
+                );
+
+        if (retrieval.getSourceIds()
+                .isEmpty()) {
+
+            throw new IllegalStateException(
+                    "No relevant course evidence was found for this quiz topic."
+            );
+        }
+
+        String instructions =
+                buildQuizInstructions(
+                        topic,
+                        normalizedDifficulty,
+                        requestedCount
+                );
+
+        ModelReply firstReply =
+                client.generate(
+                        retrieval.getData(),
+                        instructions
+                );
+
+        if (firstReply.getType()
+                != ModelReply.Type.FINAL) {
+
+            throw new IllegalStateException(
+                    "Model did not return quiz questions."
+            );
+        }
+
+        List<Question> questions =
+                parseQuizQuestions(
+                        firstReply.getFinalPayload(),
+                        retrieval.getSourceIds(),
+                        requestedCount
+                );
+
+        // =================================================
+        // ONE REPAIR ATTEMPT
+        // =================================================
+
+        if (questions.size()
+                != requestedCount) {
+
+            String repairInstructions =
+                    buildQuizRepairInstructions(
+                            topic,
+                            normalizedDifficulty,
+                            requestedCount,
+                            firstReply.getFinalPayload()
+                    );
+
+            ModelReply repairReply =
+                    client.generate(
+                            retrieval.getData(),
+                            repairInstructions
+                    );
+
+            if (repairReply.getType()
+                    == ModelReply.Type.FINAL) {
+
+                questions =
+                        parseQuizQuestions(
+                                repairReply.getFinalPayload(),
+                                retrieval.getSourceIds(),
+                                requestedCount
+                        );
+            }
+        }
+
+        if (questions.size()
+                != requestedCount) {
+
+            throw new IllegalStateException(
+                    "Quiz generation failed validation after one repair attempt. "
+                            + "No incomplete quiz was saved."
+            );
+        }
+
+        Quiz quiz =
+                new Quiz(
+                        courseId,
+                        topic,
+                        normalizedDifficulty,
+                        requestedCount,
+                        questions
+                );
+
+        repository.saveQuiz(
+                quiz
+        );
+
+        return quiz;
+    }
+
+    private String buildQuizInstructions(
+            String topic,
+            String difficulty,
+            int requestedCount) {
+
+        return """
+                Generate a multiple-choice quiz using only
+                the supplied course evidence.
+
+                Topic:
+                %s
+
+                Difficulty:
+                %s
+
+                Number of questions:
+                %d
+
+                Return EXACTLY %d valid questions.
+
+                Return ONLY one line per question using
+                exactly this format:
+
+                QUESTION|source UUID|question|option A|option B|option C|option D|correct letter|explanation
+
+                Rules:
+
+                - Each question must have exactly four choices.
+                - Correct letter must be A, B, C, or D.
+                - Exactly one option must be correct.
+                - Questions must be distinct.
+                - The four options within a question must
+                  also be distinct.
+                - Every question must be supported by the
+                  supplied course evidence.
+                - Source UUID must exactly match one of the
+                  supplied [SOURCE ...] identifiers.
+                - Explanation must briefly explain why the
+                  answer is correct using the evidence.
+                - Do not use outside knowledge.
+                - Do not include Markdown.
+                - Do not include headings.
+                - Do not number the questions.
+                - Do not include text before or after the
+                  QUESTION lines.
+                - Do not use the | character inside a
+                  question, option, or explanation.
+                """.formatted(
+                topic,
+                difficulty,
+                requestedCount,
+                requestedCount
+        );
+    }
+
+    private String buildQuizRepairInstructions(
+            String topic,
+            String difficulty,
+            int requestedCount,
+            String previousOutput) {
+
+        return """
+                The previous quiz output failed validation.
+
+                Generate the entire quiz again from scratch.
+
+                Topic:
+                %s
+
+                Difficulty:
+                %s
+
+                Required number of questions:
+                %d
+
+                You MUST return EXACTLY %d valid questions.
+
+                Return ONLY one line per question:
+
+                QUESTION|source UUID|question|option A|option B|option C|option D|correct letter|explanation
+
+                Validation rules:
+
+                - Exactly four nonempty choices per question.
+                - Correct letter must be A, B, C, or D.
+                - Exactly one option is correct.
+                - No duplicate questions.
+                - No duplicate options within a question.
+                - Every source UUID must exactly match one
+                  of the supplied [SOURCE ...] identifiers.
+                - Every question and explanation must be
+                  supported by the supplied evidence.
+                - No outside knowledge.
+                - No headings.
+                - No Markdown.
+                - No numbering.
+                - No extra text.
+                - Do not use | inside question text,
+                  choices, or explanations.
+
+                Previous invalid output:
+
+                %s
+                """.formatted(
+                topic,
+                difficulty,
+                requestedCount,
+                requestedCount,
+                previousOutput == null
+                        ? ""
+                        : previousOutput
+        );
     }
 
     // =====================================================
@@ -669,6 +956,207 @@ public class LearningAgent {
     }
 
     // =====================================================
+    // F07 PARSING + VALIDATION
+    // =====================================================
+
+    private List<Question> parseQuizQuestions(
+            String payload,
+            List<UUID> allowedSourceIds,
+            int requestedCount) {
+
+        List<Question> questions =
+                new ArrayList<>();
+
+        if (payload == null
+                || payload.isBlank()) {
+
+            return questions;
+        }
+
+        Set<UUID> allowedSources =
+                new HashSet<>(
+                        allowedSourceIds
+                );
+
+        Set<String> usedQuestions =
+                new HashSet<>();
+
+        String[] lines =
+                payload.split("\\R");
+
+        for (String rawLine :
+                lines) {
+
+            if (questions.size()
+                    >= requestedCount) {
+
+                break;
+            }
+
+            String line =
+                    rawLine.trim();
+
+            if (!line.startsWith(
+                    "QUESTION|")) {
+
+                continue;
+            }
+
+            String[] parts =
+                    line.split(
+                            "\\|",
+                            -1
+                    );
+
+            if (parts.length != 9) {
+
+                continue;
+            }
+
+            String sourceText =
+                    parts[1].trim();
+
+            String questionText =
+                    parts[2].trim();
+
+            String optionA =
+                    parts[3].trim();
+
+            String optionB =
+                    parts[4].trim();
+
+            String optionC =
+                    parts[5].trim();
+
+            String optionD =
+                    parts[6].trim();
+
+            String answerLetter =
+                    parts[7].trim()
+                            .toUpperCase();
+
+            String explanation =
+                    parts[8].trim();
+
+            if (questionText.isBlank()
+                    || optionA.isBlank()
+                    || optionB.isBlank()
+                    || optionC.isBlank()
+                    || optionD.isBlank()
+                    || explanation.isBlank()) {
+
+                continue;
+            }
+
+            UUID sourceId;
+
+            try {
+
+                sourceId =
+                        UUID.fromString(
+                                sourceText
+                        );
+
+            } catch (IllegalArgumentException e) {
+
+                continue;
+            }
+
+            if (!allowedSources.contains(
+                    sourceId)) {
+
+                continue;
+            }
+
+            int correctOptionIndex =
+                    switch (answerLetter) {
+
+                        case "A" -> 0;
+                        case "B" -> 1;
+                        case "C" -> 2;
+                        case "D" -> 3;
+
+                        default -> -1;
+                    };
+
+            if (correctOptionIndex == -1) {
+
+                continue;
+            }
+
+            List<String> options =
+                    List.of(
+                            optionA,
+                            optionB,
+                            optionC,
+                            optionD
+                    );
+
+            Set<String> normalizedOptions =
+                    new HashSet<>();
+
+            boolean duplicateOption =
+                    false;
+
+            for (String option :
+                    options) {
+
+                String normalized =
+                        option
+                                .toLowerCase()
+                                .trim();
+
+                if (!normalizedOptions.add(
+                        normalized)) {
+
+                    duplicateOption =
+                            true;
+
+                    break;
+                }
+            }
+
+            if (duplicateOption) {
+
+                continue;
+            }
+
+            String normalizedQuestion =
+                    questionText
+                            .toLowerCase()
+                            .trim();
+
+            if (!usedQuestions.add(
+                    normalizedQuestion)) {
+
+                continue;
+            }
+
+            try {
+
+                Question question =
+                        new Question(
+                                questionText,
+                                options,
+                                correctOptionIndex,
+                                explanation,
+                                sourceId
+                        );
+
+                questions.add(
+                        question
+                );
+
+            } catch (IllegalArgumentException e) {
+
+                // Reject malformed generated question.
+            }
+        }
+
+        return questions;
+    }
+
+    // =====================================================
     // SHARED F02-F04 AGENT LOGIC
     // =====================================================
 
@@ -749,7 +1237,8 @@ public class LearningAgent {
                         retrieval.getSourceIds()
                 );
 
-                retrievalUsed = true;
+                retrievalUsed =
+                        true;
             }
 
             ModelReply reply =
@@ -786,7 +1275,8 @@ public class LearningAgent {
                 String toolName =
                         reply.getToolName();
 
-                if (!tools.contains(toolName)) {
+                if (!tools.contains(
+                        toolName)) {
 
                     context.append(
                             "\nInvalid tool request: "

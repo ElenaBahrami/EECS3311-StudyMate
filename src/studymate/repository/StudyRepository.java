@@ -15,6 +15,8 @@ import studymate.model.Course;
 import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.Material;
+import studymate.model.Question;
+import studymate.model.Quiz;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
 
@@ -155,6 +157,42 @@ public class StudyRepository {
                 );
                 """;
 
+        String createQuizzesTable =
+                """
+                CREATE TABLE IF NOT EXISTS quizzes (
+                    id TEXT PRIMARY KEY,
+                    course_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    requested_count INTEGER NOT NULL,
+
+                    FOREIGN KEY(course_id)
+                        REFERENCES courses(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
+        String createQuizQuestionsTable =
+                """
+                CREATE TABLE IF NOT EXISTS quiz_questions (
+                    id TEXT PRIMARY KEY,
+                    quiz_id TEXT NOT NULL,
+                    question_order INTEGER NOT NULL,
+                    question_text TEXT NOT NULL,
+                    option_a TEXT NOT NULL,
+                    option_b TEXT NOT NULL,
+                    option_c TEXT NOT NULL,
+                    option_d TEXT NOT NULL,
+                    correct_option_index INTEGER NOT NULL,
+                    explanation TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+
+                    FOREIGN KEY(quiz_id)
+                        REFERENCES quizzes(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
         try (Statement statement =
                      connection.createStatement()) {
 
@@ -184,6 +222,14 @@ public class StudyRepository {
 
             statement.execute(
                     createFlashcardsTable
+            );
+
+            statement.execute(
+                    createQuizzesTable
+            );
+
+            statement.execute(
+                    createQuizQuestionsTable
             );
         }
     }
@@ -318,6 +364,7 @@ public class StudyRepository {
                 findCourseByName(name);
 
         if (existing != null) {
+
             return existing;
         }
 
@@ -425,7 +472,9 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
+
                 connection.rollback();
+
             } catch (SQLException ignored) {
             }
 
@@ -437,7 +486,9 @@ public class StudyRepository {
         } finally {
 
             try {
+
                 connection.setAutoCommit(true);
+
             } catch (SQLException ignored) {
             }
         }
@@ -832,7 +883,9 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
+
                 connection.rollback();
+
             } catch (SQLException ignored) {
             }
 
@@ -844,7 +897,9 @@ public class StudyRepository {
         } finally {
 
             try {
+
                 connection.setAutoCommit(true);
+
             } catch (SQLException ignored) {
             }
         }
@@ -976,7 +1031,9 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
+
                 connection.rollback();
+
             } catch (SQLException ignored) {
             }
 
@@ -988,7 +1045,226 @@ public class StudyRepository {
         } finally {
 
             try {
+
                 connection.setAutoCommit(true);
+
+            } catch (SQLException ignored) {
+            }
+        }
+    }
+
+    // =====================================================
+    // F07 - QUIZZES
+    // =====================================================
+
+    public Quiz saveQuiz(
+            Quiz quiz) {
+
+        if (quiz == null) {
+
+            throw new IllegalArgumentException(
+                    "Quiz is required."
+            );
+        }
+
+        if (!quiz.isComplete()) {
+
+            throw new IllegalArgumentException(
+                    "Cannot save an incomplete quiz."
+            );
+        }
+
+        if (quiz.getQuestions()
+                .isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "Cannot save an empty quiz."
+            );
+        }
+
+        if (findCourse(
+                quiz.getCourseId()) == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        String quizSql =
+                """
+                INSERT INTO quizzes
+                (
+                    id,
+                    course_id,
+                    topic,
+                    difficulty,
+                    requested_count
+                )
+                VALUES (?, ?, ?, ?, ?);
+                """;
+
+        String questionSql =
+                """
+                INSERT INTO quiz_questions
+                (
+                    id,
+                    quiz_id,
+                    question_order,
+                    question_text,
+                    option_a,
+                    option_b,
+                    option_c,
+                    option_d,
+                    correct_option_index,
+                    explanation,
+                    source_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """;
+
+        try {
+
+            connection.setAutoCommit(false);
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 quizSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        quiz.getId()
+                                .toString()
+                );
+
+                statement.setString(
+                        2,
+                        quiz.getCourseId()
+                                .toString()
+                );
+
+                statement.setString(
+                        3,
+                        quiz.getTopic()
+                );
+
+                statement.setString(
+                        4,
+                        quiz.getDifficulty()
+                );
+
+                statement.setInt(
+                        5,
+                        quiz.getRequestedCount()
+                );
+
+                statement.executeUpdate();
+            }
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 questionSql
+                         )) {
+
+                int order = 1;
+
+                for (Question question :
+                        quiz.getQuestions()) {
+
+                    List<String> options =
+                            question.getOptions();
+
+                    statement.setString(
+                            1,
+                            question.getId()
+                                    .toString()
+                    );
+
+                    statement.setString(
+                            2,
+                            quiz.getId()
+                                    .toString()
+                    );
+
+                    statement.setInt(
+                            3,
+                            order
+                    );
+
+                    statement.setString(
+                            4,
+                            question.getText()
+                    );
+
+                    statement.setString(
+                            5,
+                            options.get(0)
+                    );
+
+                    statement.setString(
+                            6,
+                            options.get(1)
+                    );
+
+                    statement.setString(
+                            7,
+                            options.get(2)
+                    );
+
+                    statement.setString(
+                            8,
+                            options.get(3)
+                    );
+
+                    statement.setInt(
+                            9,
+                            question
+                                    .getCorrectOptionIndex()
+                    );
+
+                    statement.setString(
+                            10,
+                            question.getExplanation()
+                    );
+
+                    statement.setString(
+                            11,
+                            question.getSourceId()
+                                    .toString()
+                    );
+
+                    statement.addBatch();
+
+                    order++;
+                }
+
+                statement.executeBatch();
+            }
+
+            connection.commit();
+
+            return quiz;
+
+        } catch (SQLException e) {
+
+            try {
+
+                connection.rollback();
+
+            } catch (SQLException ignored) {
+            }
+
+            throw new RuntimeException(
+                    "Unable to save quiz.",
+                    e
+            );
+
+        } finally {
+
+            try {
+
+                connection.setAutoCommit(true);
+
             } catch (SQLException ignored) {
             }
         }

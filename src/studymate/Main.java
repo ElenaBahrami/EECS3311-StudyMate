@@ -18,6 +18,8 @@ import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.Material;
+import studymate.model.Question;
+import studymate.model.Quiz;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
 import studymate.planning.DeadlineStrategy;
@@ -134,6 +136,13 @@ public class Main {
                         );
 
                 case "7" ->
+                        generateQuiz(
+                                scanner,
+                                learningAgent,
+                                course
+                        );
+
+                case "8" ->
                         showMaterials(
                                 repository,
                                 course
@@ -205,7 +214,11 @@ public class Main {
         );
 
         System.out.println(
-                "7 - Show saved materials"
+                "7 - Generate quiz"
+        );
+
+        System.out.println(
+                "8 - Show saved materials"
         );
 
         System.out.println(
@@ -979,6 +992,243 @@ public class Main {
 
         System.out.println(
                 "The flashcard deck was saved."
+        );
+    }
+
+    // =====================================================
+    // F07 - GENERATE MULTIPLE-CHOICE QUIZ
+    // =====================================================
+
+    private static void generateQuiz(
+            Scanner scanner,
+            LearningAgent learningAgent,
+            Course course) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== GENERATE QUIZ ====="
+        );
+
+        System.out.println();
+
+        System.out.print(
+                "Topic: "
+        );
+
+        String topic =
+                scanner.nextLine()
+                        .trim();
+
+        if (topic.isBlank()) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Quiz generation rejected: "
+                            + "topic cannot be empty."
+            );
+
+            return;
+        }
+
+        System.out.println();
+
+        System.out.println(
+                "Choose difficulty:"
+        );
+
+        System.out.println(
+                "1 - Easy"
+        );
+
+        System.out.println(
+                "2 - Medium"
+        );
+
+        System.out.println(
+                "3 - Hard"
+        );
+
+        System.out.print(
+                "Difficulty: "
+        );
+
+        String difficultyChoice =
+                scanner.nextLine()
+                        .trim();
+
+        String difficulty;
+
+        switch (difficultyChoice) {
+
+            case "1" ->
+                    difficulty = "easy";
+
+            case "2" ->
+                    difficulty = "medium";
+
+            case "3" ->
+                    difficulty = "hard";
+
+            default -> {
+
+                System.out.println();
+
+                System.out.println(
+                        "Quiz generation rejected: "
+                                + "invalid difficulty."
+                );
+
+                return;
+            }
+        }
+
+        System.out.print(
+                "Number of questions (1-20): "
+        );
+
+        try {
+
+            int requestedCount =
+                    Integer.parseInt(
+                            scanner.nextLine()
+                                    .trim()
+                    );
+
+            if (requestedCount < 1
+                    || requestedCount > 20) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Quiz generation rejected: "
+                                + "count must be between "
+                                + "1 and 20."
+                );
+
+                return;
+            }
+
+            System.out.println();
+
+            System.out.println(
+                    "Generating grounded quiz..."
+            );
+
+            Quiz quiz =
+                    learningAgent
+                            .generateQuiz(
+                                    course.id(),
+                                    topic,
+                                    difficulty,
+                                    requestedCount
+                            );
+
+            printQuiz(
+                    quiz
+            );
+
+        } catch (NumberFormatException e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Quiz generation rejected: "
+                            + "please enter a valid number."
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Quiz generation failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    private static void printQuiz(
+            Quiz quiz) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== QUIZ ====="
+        );
+
+        System.out.println();
+
+        System.out.println(
+                "Quiz ID: "
+                        + quiz.getId()
+        );
+
+        System.out.println(
+                "Topic: "
+                        + quiz.getTopic()
+        );
+
+        System.out.println(
+                "Difficulty: "
+                        + quiz.getDifficulty()
+                                .toUpperCase()
+        );
+
+        System.out.println(
+                "Questions: "
+                        + quiz.getQuestions()
+                                .size()
+        );
+
+        System.out.println();
+
+        int number = 1;
+
+        for (Question question :
+                quiz.getQuestions()) {
+
+            List<String> options =
+                    question.getOptions();
+
+            System.out.println(
+                    number
+                            + ". "
+                            + question.getText()
+            );
+
+            System.out.println(
+                    "A. "
+                            + options.get(0)
+            );
+
+            System.out.println(
+                    "B. "
+                            + options.get(1)
+            );
+
+            System.out.println(
+                    "C. "
+                            + options.get(2)
+            );
+
+            System.out.println(
+                    "D. "
+                            + options.get(3)
+            );
+
+            System.out.println();
+
+            number++;
+        }
+
+        System.out.println(
+                "The quiz was validated and saved."
+        );
+
+        System.out.println(
+                "Answer keys are hidden until grading."
         );
     }
 
