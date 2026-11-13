@@ -20,6 +20,30 @@ public class Question {
             String explanation,
             UUID sourceId) {
 
+        this(
+                UUID.randomUUID(),
+                text,
+                options,
+                correctOptionIndex,
+                explanation,
+                sourceId
+        );
+    }
+
+    public Question(
+            UUID id,
+            String text,
+            List<String> options,
+            int correctOptionIndex,
+            String explanation,
+            UUID sourceId) {
+
+        if (id == null) {
+            throw new IllegalArgumentException(
+                    "Question ID is required."
+            );
+        }
+
         if (text == null
                 || text.isBlank()) {
 
@@ -70,11 +94,13 @@ public class Question {
             );
         }
 
-        this.id = UUID.randomUUID();
+        this.id = id;
         this.text = text;
 
         this.options =
-                new ArrayList<>(options);
+                new ArrayList<>(
+                        options
+                );
 
         this.correctOptionIndex =
                 correctOptionIndex;

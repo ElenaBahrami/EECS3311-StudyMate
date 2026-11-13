@@ -20,6 +20,31 @@ public class Quiz {
             int requestedCount,
             List<Question> questions) {
 
+        this(
+                UUID.randomUUID(),
+                courseId,
+                topic,
+                difficulty,
+                requestedCount,
+                questions
+        );
+    }
+
+    public Quiz(
+            UUID id,
+            UUID courseId,
+            String topic,
+            String difficulty,
+            int requestedCount,
+            List<Question> questions) {
+
+        if (id == null) {
+
+            throw new IllegalArgumentException(
+                    "Quiz ID is required."
+            );
+        }
+
         if (courseId == null) {
 
             throw new IllegalArgumentException(
@@ -79,20 +104,11 @@ public class Quiz {
             );
         }
 
-        this.id =
-                UUID.randomUUID();
-
-        this.courseId =
-                courseId;
-
-        this.topic =
-                topic;
-
-        this.difficulty =
-                normalizedDifficulty;
-
-        this.requestedCount =
-                requestedCount;
+        this.id = id;
+        this.courseId = courseId;
+        this.topic = topic;
+        this.difficulty = normalizedDifficulty;
+        this.requestedCount = requestedCount;
 
         this.questions =
                 new ArrayList<>(

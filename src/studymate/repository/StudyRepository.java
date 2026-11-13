@@ -16,7 +16,9 @@ import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.Material;
 import studymate.model.Question;
+import studymate.model.QuestionResult;
 import studymate.model.Quiz;
+import studymate.model.QuizAttempt;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
 
@@ -193,6 +195,44 @@ public class StudyRepository {
                 );
                 """;
 
+        String createQuizAttemptsTable =
+                """
+                CREATE TABLE IF NOT EXISTS quiz_attempts (
+                    id TEXT PRIMARY KEY,
+                    quiz_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    correct_count INTEGER NOT NULL,
+                    graded_count INTEGER NOT NULL,
+                    score_percent REAL NOT NULL,
+
+                    FOREIGN KEY(quiz_id)
+                        REFERENCES quizzes(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
+        String createQuizAttemptResultsTable =
+                """
+                CREATE TABLE IF NOT EXISTS quiz_attempt_results (
+                    attempt_id TEXT NOT NULL,
+                    question_id TEXT NOT NULL,
+                    result_order INTEGER NOT NULL,
+                    selected_option_index INTEGER,
+                    correct_option_index INTEGER NOT NULL,
+                    is_correct INTEGER NOT NULL,
+
+                    PRIMARY KEY(attempt_id, question_id),
+
+                    FOREIGN KEY(attempt_id)
+                        REFERENCES quiz_attempts(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY(question_id)
+                        REFERENCES quiz_questions(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
         try (Statement statement =
                      connection.createStatement()) {
 
@@ -230,6 +270,14 @@ public class StudyRepository {
 
             statement.execute(
                     createQuizQuestionsTable
+            );
+
+            statement.execute(
+                    createQuizAttemptsTable
+            );
+
+            statement.execute(
+                    createQuizAttemptResultsTable
             );
         }
     }
@@ -364,7 +412,6 @@ public class StudyRepository {
                 findCourseByName(name);
 
         if (existing != null) {
-
             return existing;
         }
 
@@ -472,9 +519,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -486,9 +531,7 @@ public class StudyRepository {
         } finally {
 
             try {
-
                 connection.setAutoCommit(true);
-
             } catch (SQLException ignored) {
             }
         }
@@ -883,9 +926,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -897,16 +938,14 @@ public class StudyRepository {
         } finally {
 
             try {
-
                 connection.setAutoCommit(true);
-
             } catch (SQLException ignored) {
             }
         }
     }
 
     // =====================================================
-    // F06 - FLASHCARD DECKS
+    // F06 - FLASHCARDS
     // =====================================================
 
     public FlashcardDeck saveFlashcardDeck(
@@ -919,7 +958,8 @@ public class StudyRepository {
             );
         }
 
-        if (deck.getCards().isEmpty()) {
+        if (deck.getCards()
+                .isEmpty()) {
 
             throw new IllegalArgumentException(
                     "Cannot save an empty flashcard deck."
@@ -1031,9 +1071,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -1045,9 +1083,7 @@ public class StudyRepository {
         } finally {
 
             try {
-
                 connection.setAutoCommit(true);
-
             } catch (SQLException ignored) {
             }
         }
@@ -1248,9 +1284,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -1262,9 +1296,544 @@ public class StudyRepository {
         } finally {
 
             try {
-
                 connection.setAutoCommit(true);
+            } catch (SQLException ignored) {
+            }
+        }
+    }
 
+    // =====================================================
+    // F08 - LOAD SAVED QUIZ
+    // =====================================================
+
+    public Quiz findQuiz(
+            UUID quizId) {
+
+        if (quizId == null) {
+            return null;
+        }
+
+        String quizSql =
+                """
+                SELECT
+                    id,
+                    course_id,
+                    topic,
+                    difficulty,
+                    requested_count
+                FROM quizzes
+                WHERE id = ?;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(
+                             quizSql
+                     )) {
+
+            statement.setString(
+                    1,
+                    quizId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            if (!result.next()) {
+                return null;
+            }
+
+            UUID id =
+                    UUID.fromString(
+                            result.getString("id")
+                    );
+
+            UUID courseId =
+                    UUID.fromString(
+                            result.getString(
+                                    "course_id"
+                            )
+                    );
+
+            String topic =
+                    result.getString(
+                            "topic"
+                    );
+
+            String difficulty =
+                    result.getString(
+                            "difficulty"
+                    );
+
+            int requestedCount =
+                    result.getInt(
+                            "requested_count"
+                    );
+
+            List<Question> questions =
+                    loadQuizQuestions(
+                            id
+                    );
+
+            return new Quiz(
+                    id,
+                    courseId,
+                    topic,
+                    difficulty,
+                    requestedCount,
+                    questions
+            );
+
+        } catch (SQLException e) {
+
+            throw new RuntimeException(
+                    "Unable to load quiz.",
+                    e
+            );
+        }
+    }
+
+    private List<Question> loadQuizQuestions(
+            UUID quizId)
+            throws SQLException {
+
+        List<Question> questions =
+                new ArrayList<>();
+
+        String sql =
+                """
+                SELECT
+                    id,
+                    question_text,
+                    option_a,
+                    option_b,
+                    option_c,
+                    option_d,
+                    correct_option_index,
+                    explanation,
+                    source_id
+                FROM quiz_questions
+                WHERE quiz_id = ?
+                ORDER BY question_order;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    quizId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            while (result.next()) {
+
+                List<String> options =
+                        List.of(
+                                result.getString(
+                                        "option_a"
+                                ),
+                                result.getString(
+                                        "option_b"
+                                ),
+                                result.getString(
+                                        "option_c"
+                                ),
+                                result.getString(
+                                        "option_d"
+                                )
+                        );
+
+                Question question =
+                        new Question(
+                                UUID.fromString(
+                                        result.getString(
+                                                "id"
+                                        )
+                                ),
+                                result.getString(
+                                        "question_text"
+                                ),
+                                options,
+                                result.getInt(
+                                        "correct_option_index"
+                                ),
+                                result.getString(
+                                        "explanation"
+                                ),
+                                UUID.fromString(
+                                        result.getString(
+                                                "source_id"
+                                        )
+                                )
+                        );
+
+                questions.add(
+                        question
+                );
+            }
+        }
+
+        return questions;
+    }
+
+    // =====================================================
+    // F08 - QUIZ ATTEMPTS
+    // =====================================================
+
+    public QuizAttempt findAttempt(
+            UUID attemptId) {
+
+        if (attemptId == null) {
+            return null;
+        }
+
+        String attemptSql =
+                """
+                SELECT
+                    id,
+                    quiz_id,
+                    topic
+                FROM quiz_attempts
+                WHERE id = ?;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(
+                             attemptSql
+                     )) {
+
+            statement.setString(
+                    1,
+                    attemptId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            if (!result.next()) {
+                return null;
+            }
+
+            UUID id =
+                    UUID.fromString(
+                            result.getString("id")
+                    );
+
+            UUID quizId =
+                    UUID.fromString(
+                            result.getString(
+                                    "quiz_id"
+                            )
+                    );
+
+            String topic =
+                    result.getString(
+                            "topic"
+                    );
+
+            List<QuestionResult> results =
+                    loadAttemptResults(
+                            id
+                    );
+
+            return new QuizAttempt(
+                    id,
+                    quizId,
+                    topic,
+                    results
+            );
+
+        } catch (SQLException e) {
+
+            throw new RuntimeException(
+                    "Unable to load quiz attempt.",
+                    e
+            );
+        }
+    }
+
+    private List<QuestionResult>
+            loadAttemptResults(
+                    UUID attemptId)
+            throws SQLException {
+
+        List<QuestionResult> results =
+                new ArrayList<>();
+
+        String sql =
+                """
+                SELECT
+                    question_id,
+                    selected_option_index,
+                    correct_option_index
+                FROM quiz_attempt_results
+                WHERE attempt_id = ?
+                ORDER BY result_order;
+                """;
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setString(
+                    1,
+                    attemptId.toString()
+            );
+
+            ResultSet result =
+                    statement.executeQuery();
+
+            while (result.next()) {
+
+                int selectedValue =
+                        result.getInt(
+                                "selected_option_index"
+                        );
+
+                Integer selectedOptionIndex =
+                        result.wasNull()
+                                ? null
+                                : selectedValue;
+
+                QuestionResult questionResult =
+                        new QuestionResult(
+                                UUID.fromString(
+                                        result.getString(
+                                                "question_id"
+                                        )
+                                ),
+                                selectedOptionIndex,
+                                result.getInt(
+                                        "correct_option_index"
+                                )
+                        );
+
+                results.add(
+                        questionResult
+                );
+            }
+        }
+
+        return results;
+    }
+
+    public QuizAttempt recordAttempt(
+            QuizAttempt attempt) {
+
+        if (attempt == null) {
+
+            throw new IllegalArgumentException(
+                    "Quiz attempt is required."
+            );
+        }
+
+        QuizAttempt existing =
+                findAttempt(
+                        attempt.getId()
+                );
+
+        if (existing != null) {
+
+            return existing;
+        }
+
+        Quiz quiz =
+                findQuiz(
+                        attempt.getQuizId()
+                );
+
+        if (quiz == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown quiz ID."
+            );
+        }
+
+        if (attempt.getResults().size()
+                != quiz.getQuestions().size()) {
+
+            throw new IllegalArgumentException(
+                    "Attempt must contain one result "
+                            + "for every quiz question."
+            );
+        }
+
+        String attemptSql =
+                """
+                INSERT INTO quiz_attempts
+                (
+                    id,
+                    quiz_id,
+                    topic,
+                    correct_count,
+                    graded_count,
+                    score_percent
+                )
+                VALUES (?, ?, ?, ?, ?, ?);
+                """;
+
+        String resultSql =
+                """
+                INSERT INTO quiz_attempt_results
+                (
+                    attempt_id,
+                    question_id,
+                    result_order,
+                    selected_option_index,
+                    correct_option_index,
+                    is_correct
+                )
+                VALUES (?, ?, ?, ?, ?, ?);
+                """;
+
+        try {
+
+            connection.setAutoCommit(
+                    false
+            );
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 attemptSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        attempt.getId()
+                                .toString()
+                );
+
+                statement.setString(
+                        2,
+                        attempt.getQuizId()
+                                .toString()
+                );
+
+                statement.setString(
+                        3,
+                        attempt.getTopic()
+                );
+
+                statement.setInt(
+                        4,
+                        attempt.getCorrectCount()
+                );
+
+                statement.setInt(
+                        5,
+                        attempt.getGradedCount()
+                );
+
+                statement.setDouble(
+                        6,
+                        attempt.getScorePercent()
+                );
+
+                statement.executeUpdate();
+            }
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 resultSql
+                         )) {
+
+                int order = 1;
+
+                for (QuestionResult result :
+                        attempt.getResults()) {
+
+                    statement.setString(
+                            1,
+                            attempt.getId()
+                                    .toString()
+                    );
+
+                    statement.setString(
+                            2,
+                            result.getQuestionId()
+                                    .toString()
+                    );
+
+                    statement.setInt(
+                            3,
+                            order
+                    );
+
+                    if (result
+                            .getSelectedOptionIndex()
+                            == null) {
+
+                        statement.setNull(
+                                4,
+                                java.sql.Types.INTEGER
+                        );
+
+                    } else {
+
+                        statement.setInt(
+                                4,
+                                result
+                                        .getSelectedOptionIndex()
+                        );
+                    }
+
+                    statement.setInt(
+                            5,
+                            result
+                                    .getCorrectOptionIndex()
+                    );
+
+                    statement.setInt(
+                            6,
+                            result.isCorrect()
+                                    ? 1
+                                    : 0
+                    );
+
+                    statement.addBatch();
+
+                    order++;
+                }
+
+                statement.executeBatch();
+            }
+
+            connection.commit();
+
+            return attempt;
+
+        } catch (SQLException e) {
+
+            try {
+                connection.rollback();
+            } catch (SQLException ignored) {
+            }
+
+            // If this attempt ID was inserted by an
+            // earlier/repeated submission, return it
+            // instead of adding another observation.
+            QuizAttempt repeated =
+                    findAttempt(
+                            attempt.getId()
+                    );
+
+            if (repeated != null) {
+
+                return repeated;
+            }
+
+            throw new RuntimeException(
+                    "Unable to save quiz attempt.",
+                    e
+            );
+
+        } finally {
+
+            try {
+                connection.setAutoCommit(
+                        true
+                );
             } catch (SQLException ignored) {
             }
         }

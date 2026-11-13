@@ -3,6 +3,7 @@ package studymate.agent;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,7 +14,9 @@ import studymate.model.Flashcard;
 import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.Question;
+import studymate.model.QuestionResult;
 import studymate.model.Quiz;
+import studymate.model.QuizAttempt;
 import studymate.model.StudyPlan;
 import studymate.model.StudyTopic;
 import studymate.planning.SchedulingStrategy;
@@ -549,7 +552,8 @@ public class LearningAgent {
                 .isEmpty()) {
 
             throw new IllegalStateException(
-                    "No relevant course evidence was found for this quiz topic."
+                    "No relevant course evidence was found "
+                            + "for this quiz topic."
             );
         }
 
@@ -581,10 +585,7 @@ public class LearningAgent {
                         requestedCount
                 );
 
-        // =================================================
-        // ONE REPAIR ATTEMPT
-        // =================================================
-
+        // One repair attempt.
         if (questions.size()
                 != requestedCount) {
 
@@ -618,7 +619,8 @@ public class LearningAgent {
                 != requestedCount) {
 
             throw new IllegalStateException(
-                    "Quiz generation failed validation after one repair attempt. "
+                    "Quiz generation failed validation "
+                            + "after one repair attempt. "
                             + "No incomplete quiz was saved."
             );
         }
@@ -751,6 +753,266 @@ public class LearningAgent {
                         ? ""
                         : previousOutput
         );
+    }
+
+    // =====================================================
+    // F08 - EXPLAIN QUIZ MISTAKES
+    // =====================================================
+
+    public Map<UUID, String> explainMistakes(
+            Quiz quiz,
+            QuizAttempt attempt)
+            throws Exception {
+
+        if (quiz == null) {
+
+            throw new IllegalArgumentException(
+                    "Quiz is required."
+            );
+        }
+
+        if (attempt == null) {
+
+            throw new IllegalArgumentException(
+                    "Quiz attempt is required."
+            );
+        }
+
+        if (!quiz.getId()
+                .equals(attempt.getQuizId())) {
+
+            throw new IllegalArgumentException(
+                    "Quiz attempt does not belong "
+                            + "to this quiz."
+            );
+        }
+
+        List<Question> questions =
+                quiz.getQuestions();
+
+        List<QuestionResult> results =
+                attempt.getResults();
+
+        if (questions.size()
+                != results.size()) {
+
+            throw new IllegalArgumentException(
+                    "Quiz and attempt results do not match."
+            );
+        }
+
+        List<Question> wrongQuestions =
+                new ArrayList<>();
+
+        for (int i = 0;
+             i < results.size();
+             i++) {
+
+            if (!results.get(i)
+                    .isCorrect()) {
+
+                wrongQuestions.add(
+                        questions.get(i)
+                );
+            }
+        }
+
+        if (wrongQuestions.isEmpty()) {
+
+            return Map.of();
+        }
+
+        ToolResult retrieval =
+                tools.execute(
+                        "retrieve",
+                        Map.of(
+                                "courseId",
+                                quiz.getCourseId()
+                                        .toString(),
+                                "query",
+                                quiz.getTopic()
+                        )
+                );
+
+        if (retrieval.getSourceIds()
+                .isEmpty()) {
+
+            return Map.of();
+        }
+
+        StringBuilder mistakes =
+                new StringBuilder();
+
+        for (Question question :
+                wrongQuestions) {
+
+            mistakes.append(
+                    "QUESTION_ID: "
+                            + question.getId()
+                            + "\n"
+            );
+
+            mistakes.append(
+                    "QUESTION: "
+                            + question.getText()
+                            + "\n"
+            );
+
+            mistakes.append(
+                    "CORRECT ANSWER: "
+                            + question
+                            .getCorrectOptionLetter()
+                            + ". "
+                            + question
+                            .getOptions()
+                            .get(
+                                    question
+                                    .getCorrectOptionIndex()
+                            )
+                            + "\n"
+            );
+
+            mistakes.append(
+                    "SOURCE_ID: "
+                            + question.getSourceId()
+                            + "\n\n"
+            );
+        }
+
+        String instructions =
+                """
+                Explain the student's incorrect quiz answers
+                using only the supplied course evidence.
+
+                The incorrect questions are:
+
+                %s
+
+                Return ONLY one line for each incorrect
+                question using exactly this format:
+
+                FEEDBACK|question UUID|explanation
+
+                Rules:
+
+                - Explain why the stored correct answer is correct.
+                - Keep each explanation concise and useful for studying.
+                - Use only the supplied course evidence.
+                - Do not change or challenge the stored answer key.
+                - Do not calculate or modify the quiz score.
+                - Do not use outside knowledge.
+                - Only return feedback for the listed question IDs.
+                - Do not include Markdown.
+                - Do not include headings.
+                - Do not include any other text.
+                - Do not use the | character inside an explanation.
+                """.formatted(
+                        mistakes.toString()
+                );
+
+        ModelReply reply =
+                client.generate(
+                        retrieval.getData(),
+                        instructions
+                );
+
+        if (reply.getType()
+                != ModelReply.Type.FINAL) {
+
+            return Map.of();
+        }
+
+        return parseQuizFeedback(
+                reply.getFinalPayload(),
+                wrongQuestions
+        );
+    }
+
+    private Map<UUID, String> parseQuizFeedback(
+            String payload,
+            List<Question> wrongQuestions) {
+
+        Map<UUID, String> feedback =
+                new LinkedHashMap<>();
+
+        if (payload == null
+                || payload.isBlank()) {
+
+            return feedback;
+        }
+
+        Set<UUID> allowedQuestionIds =
+                new HashSet<>();
+
+        for (Question question :
+                wrongQuestions) {
+
+            allowedQuestionIds.add(
+                    question.getId()
+            );
+        }
+
+        String[] lines =
+                payload.split("\\R");
+
+        for (String rawLine :
+                lines) {
+
+            String line =
+                    rawLine.trim();
+
+            if (!line.startsWith(
+                    "FEEDBACK|")) {
+
+                continue;
+            }
+
+            String[] parts =
+                    line.split(
+                            "\\|",
+                            3
+                    );
+
+            if (parts.length != 3) {
+
+                continue;
+            }
+
+            UUID questionId;
+
+            try {
+
+                questionId =
+                        UUID.fromString(
+                                parts[1].trim()
+                        );
+
+            } catch (IllegalArgumentException e) {
+
+                continue;
+            }
+
+            if (!allowedQuestionIds
+                    .contains(questionId)) {
+
+                continue;
+            }
+
+            String explanation =
+                    parts[2].trim();
+
+            if (explanation.isBlank()) {
+
+                continue;
+            }
+
+            feedback.put(
+                    questionId,
+                    explanation
+            );
+        }
+
+        return feedback;
     }
 
     // =====================================================

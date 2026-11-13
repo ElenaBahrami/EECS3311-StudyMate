@@ -5,7 +5,9 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
+import java.util.UUID;
 
 import studymate.agent.LearningAgent;
 import studymate.agent.OpenAIAdapter;
@@ -19,7 +21,9 @@ import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.Material;
 import studymate.model.Question;
+import studymate.model.QuestionResult;
 import studymate.model.Quiz;
+import studymate.model.QuizAttempt;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
 import studymate.planning.DeadlineStrategy;
@@ -27,6 +31,7 @@ import studymate.planning.SchedulingStrategy;
 import studymate.planning.WeakTopicStrategy;
 import studymate.repository.StudyRepository;
 import studymate.service.MaterialService;
+import studymate.service.QuizService;
 
 public class Main {
 
@@ -76,6 +81,11 @@ public class Main {
                 new LearningAgent(
                         openAI,
                         toolRegistry,
+                        repository
+                );
+
+        QuizService quizService =
+                new QuizService(
                         repository
                 );
 
@@ -143,6 +153,14 @@ public class Main {
                         );
 
                 case "8" ->
+                        gradeQuiz(
+                                scanner,
+                                repository,
+                                quizService,
+                                learningAgent
+                        );
+
+                case "9" ->
                         showMaterials(
                                 repository,
                                 course
@@ -218,7 +236,11 @@ public class Main {
         );
 
         System.out.println(
-                "8 - Show saved materials"
+                "8 - Grade quiz"
+        );
+
+        System.out.println(
+                "9 - Show saved materials"
         );
 
         System.out.println(
@@ -275,7 +297,7 @@ public class Main {
             System.out.println(
                     "Chunks: "
                             + material.chunks()
-                            .size()
+                                    .size()
             );
 
         } catch (IOException e) {
@@ -332,8 +354,8 @@ public class Main {
             System.out.println(
                     "Sources used: "
                             + summary
-                            .getSourceIds()
-                            .size()
+                                    .getSourceIds()
+                                    .size()
             );
 
         } catch (Exception e) {
@@ -386,8 +408,8 @@ public class Main {
             System.out.println(
                     "Sources used: "
                             + concepts
-                            .getSourceIds()
-                            .size()
+                                    .getSourceIds()
+                                    .size()
             );
 
         } catch (Exception e) {
@@ -446,8 +468,8 @@ public class Main {
             System.out.println(
                     "Sources used: "
                             + answer
-                            .getSourceIds()
-                            .size()
+                                    .getSourceIds()
+                                    .size()
             );
 
         } catch (Exception e) {
@@ -1233,6 +1255,563 @@ public class Main {
     }
 
     // =====================================================
+    // F08 - GRADE QUIZ
+    // =====================================================
+
+    private static void gradeQuiz(
+            Scanner scanner,
+            StudyRepository repository,
+            QuizService quizService,
+            LearningAgent learningAgent) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== GRADE QUIZ ====="
+        );
+
+        System.out.println();
+
+        System.out.print(
+                "Quiz ID: "
+        );
+
+        String quizIdText =
+                scanner.nextLine()
+                        .trim();
+
+        UUID quizId;
+
+        try {
+
+            quizId =
+                    UUID.fromString(
+                            quizIdText
+                    );
+
+        } catch (IllegalArgumentException e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Grading rejected: "
+                            + "invalid Quiz ID."
+            );
+
+            return;
+        }
+
+        Quiz quiz =
+                repository.findQuiz(
+                        quizId
+                );
+
+        if (quiz == null) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Grading rejected: "
+                            + "quiz was not found."
+            );
+
+            return;
+        }
+
+        System.out.println();
+
+        System.out.println(
+                "Topic: "
+                        + quiz.getTopic()
+        );
+
+        System.out.println(
+                "Difficulty: "
+                        + quiz.getDifficulty()
+                                .toUpperCase()
+        );
+
+        System.out.println(
+                "Questions: "
+                        + quiz.getQuestions()
+                                .size()
+        );
+
+        System.out.println();
+
+        System.out.print(
+                "Attempt ID "
+                        + "(press Enter to create one): "
+        );
+
+        String attemptIdText =
+                scanner.nextLine()
+                        .trim();
+
+        UUID attemptId;
+
+        if (attemptIdText.isBlank()) {
+
+            attemptId =
+                    UUID.randomUUID();
+
+            System.out.println(
+                    "Generated Attempt ID: "
+                            + attemptId
+            );
+
+        } else {
+
+            try {
+
+                attemptId =
+                        UUID.fromString(
+                                attemptIdText
+                        );
+
+            } catch (IllegalArgumentException e) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Grading rejected: "
+                                + "invalid Attempt ID."
+                );
+
+                return;
+            }
+        }
+
+        QuizAttempt previousAttempt =
+                repository.findAttempt(
+                        attemptId
+                );
+
+        if (previousAttempt != null) {
+
+            if (!previousAttempt
+                    .getQuizId()
+                    .equals(quizId)) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Grading rejected: "
+                                + "this Attempt ID already "
+                                + "belongs to another quiz."
+                );
+
+                return;
+            }
+
+            System.out.println();
+
+            System.out.println(
+                    "This Attempt ID was already submitted."
+            );
+
+            System.out.println(
+                    "Returning the existing result "
+                            + "without grading again."
+            );
+
+            printQuizResult(
+                    quiz,
+                    previousAttempt,
+                    learningAgent,
+                    false
+            );
+
+            return;
+        }
+
+        List<Integer> selectedAnswers =
+                new ArrayList<>();
+
+        boolean hasSkippedAnswers =
+                false;
+
+        List<Question> questions =
+                quiz.getQuestions();
+
+        for (int i = 0;
+             i < questions.size();
+             i++) {
+
+            Question question =
+                    questions.get(i);
+
+            List<String> options =
+                    question.getOptions();
+
+            System.out.println();
+
+            System.out.println(
+                    (i + 1)
+                            + ". "
+                            + question.getText()
+            );
+
+            System.out.println(
+                    "A. "
+                            + options.get(0)
+            );
+
+            System.out.println(
+                    "B. "
+                            + options.get(1)
+            );
+
+            System.out.println(
+                    "C. "
+                            + options.get(2)
+            );
+
+            System.out.println(
+                    "D. "
+                            + options.get(3)
+            );
+
+            while (true) {
+
+                System.out.print(
+                        "Your answer "
+                                + "(A/B/C/D or S to skip): "
+                );
+
+                String answer =
+                        scanner.nextLine()
+                                .trim()
+                                .toUpperCase();
+
+                switch (answer) {
+
+                    case "A" ->
+                            selectedAnswers.add(0);
+
+                    case "B" ->
+                            selectedAnswers.add(1);
+
+                    case "C" ->
+                            selectedAnswers.add(2);
+
+                    case "D" ->
+                            selectedAnswers.add(3);
+
+                    case "S" -> {
+
+                        selectedAnswers.add(
+                                null
+                        );
+
+                        hasSkippedAnswers =
+                                true;
+                    }
+
+                    default -> {
+
+                        System.out.println(
+                                "Please enter A, B, C, D, "
+                                        + "or S."
+                        );
+
+                        continue;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        if (hasSkippedAnswers) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Skipped questions receive zero credit."
+            );
+
+            System.out.print(
+                    "Submit with skipped answers? "
+                            + "(Y/N): "
+            );
+
+            String confirmation =
+                    scanner.nextLine()
+                            .trim()
+                            .toUpperCase();
+
+            if (!confirmation.equals("Y")) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Submission cancelled."
+                );
+
+                return;
+            }
+        }
+
+        try {
+
+            QuizAttempt attempt =
+                    quizService.grade(
+                            quizId,
+                            attemptId,
+                            selectedAnswers
+                    );
+
+            printQuizResult(
+                    quiz,
+                    attempt,
+                    learningAgent,
+                    true
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Grading failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    private static void printQuizResult(
+            Quiz quiz,
+            QuizAttempt attempt,
+            LearningAgent learningAgent,
+            boolean newSubmission) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== QUIZ RESULT ====="
+        );
+
+        System.out.println();
+
+        System.out.println(
+                "Attempt ID: "
+                        + attempt.getId()
+        );
+
+        System.out.println(
+                "Quiz ID: "
+                        + attempt.getQuizId()
+        );
+
+        System.out.println(
+                "Correct: "
+                        + attempt.getCorrectCount()
+                        + " / "
+                        + attempt.getGradedCount()
+        );
+
+        System.out.printf(
+                "Score: %.2f%%%n",
+                attempt.getScorePercent()
+        );
+
+        System.out.println();
+
+        List<Question> questions =
+                quiz.getQuestions();
+
+        List<QuestionResult> results =
+                attempt.getResults();
+
+        Map<UUID, String> feedback =
+                Map.of();
+
+        boolean hasWrongAnswer =
+                false;
+
+        for (QuestionResult result :
+                results) {
+
+            if (!result.isCorrect()) {
+
+                hasWrongAnswer =
+                        true;
+
+                break;
+            }
+        }
+
+        // AI explanations are requested only for a new
+        // submission. Replayed attempts return the existing
+        // deterministic result without another AI call.
+        if (hasWrongAnswer
+                && newSubmission) {
+
+            System.out.println(
+                    "Generating explanations "
+                            + "for incorrect answers..."
+            );
+
+            try {
+
+                feedback =
+                        learningAgent
+                                .explainMistakes(
+                                        quiz,
+                                        attempt
+                                );
+
+            } catch (Exception e) {
+
+                System.out.println(
+                        "AI explanations are unavailable, "
+                                + "but your score is saved."
+                );
+            }
+
+            System.out.println();
+        }
+
+        for (int i = 0;
+             i < results.size();
+             i++) {
+
+            Question question =
+                    questions.get(i);
+
+            QuestionResult result =
+                    results.get(i);
+
+            System.out.println(
+                    "Question "
+                            + (i + 1)
+                            + ":"
+            );
+
+            if (result.isCorrect()) {
+
+                System.out.println(
+                        "Result: CORRECT"
+                );
+
+            } else {
+
+                System.out.println(
+                        "Result: INCORRECT"
+                );
+            }
+
+            if (result.isSkipped()) {
+
+                System.out.println(
+                        "Your answer: SKIPPED"
+                );
+
+            } else {
+
+                System.out.println(
+                        "Your answer: "
+                                + optionLetter(
+                                        result
+                                                .getSelectedOptionIndex()
+                                )
+                );
+            }
+
+            System.out.println(
+                    "Correct answer: "
+                            + optionLetter(
+                                    result
+                                            .getCorrectOptionIndex()
+                            )
+                            + ". "
+                            + question
+                                    .getOptions()
+                                    .get(
+                                            result
+                                                    .getCorrectOptionIndex()
+                                    )
+            );
+
+            if (!result.isCorrect()) {
+
+                String explanation =
+                        feedback.get(
+                                question.getId()
+                        );
+
+                if (explanation != null
+                        && !explanation.isBlank()) {
+
+                    System.out.println(
+                            "Explanation: "
+                                    + explanation
+                    );
+
+                } else if (newSubmission) {
+
+                    System.out.println(
+                            "Explanation: "
+                                    + question.getExplanation()
+                    );
+
+                } else {
+
+                    System.out.println(
+                            "Stored explanation: "
+                                    + question.getExplanation()
+                    );
+                }
+            }
+
+            System.out.println();
+        }
+
+        if (newSubmission) {
+
+            System.out.println(
+                    "The quiz attempt was saved."
+            );
+
+        } else {
+
+            System.out.println(
+                    "Existing quiz attempt loaded."
+            );
+
+            System.out.println(
+                    "No duplicate attempt was saved."
+            );
+        }
+
+        System.out.println(
+                "The score was calculated "
+                        + "deterministically from "
+                        + "the stored answer key."
+        );
+    }
+
+    private static String optionLetter(
+            Integer optionIndex) {
+
+        if (optionIndex == null) {
+
+            return "SKIPPED";
+        }
+
+        return switch (optionIndex) {
+
+            case 0 -> "A";
+            case 1 -> "B";
+            case 2 -> "C";
+            case 3 -> "D";
+
+            default -> "?";
+        };
+    }
+
+    // =====================================================
     // SHOW MATERIALS
     // =====================================================
 
@@ -1270,7 +1849,7 @@ public class Main {
                             + material.getTitle()
                             + " | "
                             + material.chunks()
-                            .size()
+                                    .size()
                             + " chunks"
             );
         }
