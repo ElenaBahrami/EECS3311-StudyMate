@@ -1,11 +1,17 @@
 package studymate.agent;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import studymate.model.AvailabilitySlot;
 import studymate.model.LearningArtifact;
+import studymate.model.StudyPlan;
+import studymate.model.StudyTopic;
+import studymate.planning.SchedulingStrategy;
+import studymate.planning.StudyPlanner;
 import studymate.repository.StudyRepository;
 
 public class LearningAgent {
@@ -15,15 +21,31 @@ public class LearningAgent {
     private final LLMClient client;
     private final ToolRegistry tools;
     private final StudyRepository repository;
+    private final StudyPlanner planner;
 
     public LearningAgent(
             LLMClient client,
             ToolRegistry tools,
             StudyRepository repository) {
 
+        this(
+                client,
+                tools,
+                repository,
+                new StudyPlanner()
+        );
+    }
+
+    public LearningAgent(
+            LLMClient client,
+            ToolRegistry tools,
+            StudyRepository repository,
+            StudyPlanner planner) {
+
         this.client = client;
         this.tools = tools;
         this.repository = repository;
+        this.planner = planner;
     }
 
     // =====================================================
@@ -154,7 +176,253 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // SHARED AGENT LOGIC
+    // F05 - GENERATE PERSONALISED STUDY PLAN
+    // =====================================================
+
+    public StudyPlan generateStudyPlan(
+            UUID courseId,
+            LocalDate examDate,
+            List<AvailabilitySlot> availability,
+            SchedulingStrategy strategy)
+            throws Exception {
+
+        if (courseId == null) {
+
+            throw new IllegalArgumentException(
+                    "Course ID is required."
+            );
+        }
+
+        if (repository.findCourse(courseId)
+                == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        if (examDate == null) {
+
+            throw new IllegalArgumentException(
+                    "Exam date is required."
+            );
+        }
+
+        if (!examDate.isAfter(
+                LocalDate.now())) {
+
+            throw new IllegalArgumentException(
+                    "Exam date must be in the future."
+            );
+        }
+
+        if (availability == null
+                || availability.isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "Availability is required."
+            );
+        }
+
+        if (strategy == null) {
+
+            throw new IllegalArgumentException(
+                    "Scheduling strategy is required."
+            );
+        }
+
+        ToolResult retrieval =
+                tools.execute(
+                        "retrieve",
+                        Map.of(
+                                "courseId",
+                                courseId.toString(),
+                                "query",
+                                ""
+                        )
+                );
+
+        if (retrieval
+                .getSourceIds()
+                .isEmpty()) {
+
+            throw new IllegalStateException(
+                    "No course evidence is available."
+            );
+        }
+
+        String instructions =
+                """
+                Identify the most important study topics
+                from the supplied course evidence.
+
+                For each topic estimate the amount of study
+                time required and assign a priority.
+
+                Return ONLY lines in exactly this format:
+
+                TOPIC|topic name|estimated minutes|priority
+
+                Rules:
+
+                - Produce approximately 6 to 10 topics.
+                - Estimated minutes must be a positive integer.
+                - Use approximately 30 to 90 minutes per topic.
+                - Priority must be an integer from 1 to 5.
+                - Priority 5 means highest importance.
+                - Use only topics supported by the supplied
+                  course evidence.
+                - Do not include headings.
+                - Do not include explanations.
+                - Do not include Markdown.
+                - Do not include source identifiers.
+                - Do not include any text before or after
+                  the TOPIC lines.
+
+                Example format:
+
+                TOPIC|Adapter Pattern|45|5
+                TOPIC|Observer Pattern|45|4
+                """;
+
+        ModelReply reply =
+                client.generate(
+                        retrieval.getData(),
+                        instructions
+                );
+
+        if (reply.getType()
+                != ModelReply.Type.FINAL) {
+
+            throw new IllegalStateException(
+                    "Model did not return study topics."
+            );
+        }
+
+        List<StudyTopic> topics =
+                parseStudyTopics(
+                        reply.getFinalPayload()
+                );
+
+        if (topics.isEmpty()) {
+
+            throw new IllegalStateException(
+                    "No valid study topics were generated."
+            );
+        }
+
+        StudyPlan plan =
+                planner.createPlan(
+                        courseId,
+                        examDate,
+                        topics,
+                        availability,
+                        strategy
+                );
+
+        /*
+         * Stage 1 rule:
+         * save only a feasible plan.
+         *
+         * If capacity is insufficient,
+         * return the plan with its
+         * unscheduled topics but do not
+         * persist it.
+         */
+        if (plan.isFeasible()) {
+
+            repository.savePlan(
+                    plan
+            );
+        }
+
+        return plan;
+    }
+
+    // =====================================================
+    // PARSE AI TOPIC OUTPUT
+    // =====================================================
+
+    private List<StudyTopic> parseStudyTopics(
+            String payload) {
+
+        List<StudyTopic> topics =
+                new ArrayList<>();
+
+        if (payload == null
+                || payload.isBlank()) {
+
+            return topics;
+        }
+
+        String[] lines =
+                payload.split("\\R");
+
+        for (String rawLine :
+                lines) {
+
+            String line =
+                    rawLine.trim();
+
+            if (!line.startsWith(
+                    "TOPIC|")) {
+
+                continue;
+            }
+
+            String[] parts =
+                    line.split(
+                            "\\|",
+                            -1
+                    );
+
+            if (parts.length != 4) {
+
+                continue;
+            }
+
+            String name =
+                    parts[1].trim();
+
+            try {
+
+                int minutes =
+                        Integer.parseInt(
+                                parts[2].trim()
+                        );
+
+                int priority =
+                        Integer.parseInt(
+                                parts[3].trim()
+                        );
+
+                if (name.isBlank()
+                        || minutes <= 0
+                        || priority < 1
+                        || priority > 5) {
+
+                    continue;
+                }
+
+                topics.add(
+                        new StudyTopic(
+                                name,
+                                minutes,
+                                priority
+                        )
+                );
+
+            } catch (NumberFormatException e) {
+
+                // Ignore malformed model lines.
+            }
+        }
+
+        return topics;
+    }
+
+    // =====================================================
+    // SHARED F02-F04 AGENT LOGIC
     // =====================================================
 
     private LearningArtifact generateArtifact(

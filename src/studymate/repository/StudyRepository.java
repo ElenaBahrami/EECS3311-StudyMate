@@ -13,6 +13,8 @@ import java.util.UUID;
 import studymate.model.Chunk;
 import studymate.model.Course;
 import studymate.model.Material;
+import studymate.model.StudyPlan;
+import studymate.model.StudySession;
 
 public class StudyRepository {
 
@@ -48,6 +50,10 @@ public class StudyRepository {
             );
         }
     }
+
+    // =====================================================
+    // DATABASE TABLES
+    // =====================================================
 
     private void createTables()
             throws SQLException {
@@ -88,6 +94,36 @@ public class StudyRepository {
                 );
                 """;
 
+        String createStudyPlansTable =
+                """
+                CREATE TABLE IF NOT EXISTS study_plans (
+                    id TEXT PRIMARY KEY,
+                    course_id TEXT NOT NULL,
+                    exam_date TEXT NOT NULL,
+                    strategy_name TEXT NOT NULL,
+
+                    FOREIGN KEY(course_id)
+                        REFERENCES courses(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
+        String createStudySessionsTable =
+                """
+                CREATE TABLE IF NOT EXISTS study_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_id TEXT NOT NULL,
+                    session_order INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    minutes INTEGER NOT NULL,
+
+                    FOREIGN KEY(plan_id)
+                        REFERENCES study_plans(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
         try (Statement statement =
                      connection.createStatement()) {
 
@@ -102,14 +138,23 @@ public class StudyRepository {
             statement.execute(
                     createChunksTable
             );
+
+            statement.execute(
+                    createStudyPlansTable
+            );
+
+            statement.execute(
+                    createStudySessionsTable
+            );
         }
     }
 
     // =====================================================
-    // COURSE
+    // COURSES
     // =====================================================
 
-    public Course saveCourse(Course course) {
+    public Course saveCourse(
+            Course course) {
 
         String sql =
                 """
@@ -143,7 +188,8 @@ public class StudyRepository {
         }
     }
 
-    public Course findCourse(UUID courseId) {
+    public Course findCourse(
+            UUID courseId) {
 
         String sql =
                 """
@@ -233,17 +279,20 @@ public class StudyRepository {
                 findCourseByName(name);
 
         if (existing != null) {
+
             return existing;
         }
 
         Course course =
                 new Course(name);
 
-        return saveCourse(course);
+        return saveCourse(
+                course
+        );
     }
 
     // =====================================================
-    // MATERIAL
+    // MATERIALS
     // =====================================================
 
     public Material saveMaterial(
@@ -265,15 +314,19 @@ public class StudyRepository {
 
         try {
 
-            connection.setAutoCommit(false);
+            connection.setAutoCommit(
+                    false
+            );
 
             try (PreparedStatement materialStatement =
                          connection.prepareStatement(
-                                 materialSql)) {
+                                 materialSql
+                         )) {
 
                 materialStatement.setString(
                         1,
-                        material.getId().toString()
+                        material.getId()
+                                .toString()
                 );
 
                 materialStatement.setString(
@@ -297,19 +350,22 @@ public class StudyRepository {
 
             try (PreparedStatement chunkStatement =
                          connection.prepareStatement(
-                                 chunkSql)) {
+                                 chunkSql
+                         )) {
 
                 for (Chunk chunk :
                         material.chunks()) {
 
                     chunkStatement.setString(
                             1,
-                            chunk.getId().toString()
+                            chunk.getId()
+                                    .toString()
                     );
 
                     chunkStatement.setString(
                             2,
-                            material.getId().toString()
+                            material.getId()
+                                    .toString()
                     );
 
                     chunkStatement.setInt(
@@ -335,7 +391,9 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
+
                 connection.rollback();
+
             } catch (SQLException ignored) {
             }
 
@@ -347,7 +405,11 @@ public class StudyRepository {
         } finally {
 
             try {
-                connection.setAutoCommit(true);
+
+                connection.setAutoCommit(
+                        true
+                );
+
             } catch (SQLException ignored) {
             }
         }
@@ -381,7 +443,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
                 return material;
             }
@@ -425,7 +489,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
                 return material;
             }
@@ -441,8 +507,9 @@ public class StudyRepository {
         return null;
     }
 
-    public List<Material> getMaterialsByCourse(
-            UUID courseId) {
+    public List<Material>
+            getMaterialsByCourse(
+                    UUID courseId) {
 
         List<Material> materials =
                 new ArrayList<>();
@@ -473,9 +540,13 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
-                materials.add(material);
+                materials.add(
+                        material
+                );
             }
 
         } catch (SQLException e) {
@@ -489,7 +560,8 @@ public class StudyRepository {
         return materials;
     }
 
-    public List<Material> getAllMaterials() {
+    public List<Material>
+            getAllMaterials() {
 
         List<Material> materials =
                 new ArrayList<>();
@@ -514,9 +586,13 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(material);
+                loadChunks(
+                        material
+                );
 
-                materials.add(material);
+                materials.add(
+                        material
+                );
             }
 
         } catch (SQLException e) {
@@ -542,14 +618,19 @@ public class StudyRepository {
         UUID courseId =
                 UUID.fromString(
                         result.getString(
-                                "course_id")
+                                "course_id"
+                        )
                 );
 
         String title =
-                result.getString("title");
+                result.getString(
+                        "title"
+                );
 
         String hash =
-                result.getString("hash");
+                result.getString(
+                        "hash"
+                );
 
         return new Material(
                 id,
@@ -576,7 +657,8 @@ public class StudyRepository {
 
             statement.setString(
                     1,
-                    material.getId().toString()
+                    material.getId()
+                            .toString()
             );
 
             ResultSet result =
@@ -588,7 +670,8 @@ public class StudyRepository {
                         new Chunk(
                                 UUID.fromString(
                                         result.getString(
-                                                "id")
+                                                "id"
+                                        )
                                 ),
                                 result.getInt(
                                         "page"
@@ -598,7 +681,170 @@ public class StudyRepository {
                                 )
                         );
 
-                material.addChunk(chunk);
+                material.addChunk(
+                        chunk
+                );
+            }
+        }
+    }
+
+    // =====================================================
+    // F05 - STUDY PLANS
+    // =====================================================
+
+    public StudyPlan savePlan(
+            StudyPlan plan) {
+
+        if (plan == null) {
+
+            throw new IllegalArgumentException(
+                    "Study plan is required."
+            );
+        }
+
+        /*
+         * Stage 1 requirement:
+         * invalid/infeasible plans must not
+         * be persisted.
+         */
+        if (!plan.isFeasible()) {
+
+            throw new IllegalArgumentException(
+                    "Cannot save an infeasible study plan."
+            );
+        }
+
+        if (findCourse(
+                plan.getCourseId()) == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        String planSql =
+                """
+                INSERT INTO study_plans
+                (id, course_id, exam_date, strategy_name)
+                VALUES (?, ?, ?, ?);
+                """;
+
+        String sessionSql =
+                """
+                INSERT INTO study_sessions
+                (plan_id, session_order, date, topic, minutes)
+                VALUES (?, ?, ?, ?, ?);
+                """;
+
+        try {
+
+            connection.setAutoCommit(
+                    false
+            );
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 planSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        plan.getId()
+                                .toString()
+                );
+
+                statement.setString(
+                        2,
+                        plan.getCourseId()
+                                .toString()
+                );
+
+                statement.setString(
+                        3,
+                        plan.getExamDate()
+                                .toString()
+                );
+
+                statement.setString(
+                        4,
+                        plan.getStrategyName()
+                );
+
+                statement.executeUpdate();
+            }
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 sessionSql
+                         )) {
+
+                int order = 1;
+
+                for (StudySession session :
+                        plan.getSessions()) {
+
+                    statement.setString(
+                            1,
+                            plan.getId()
+                                    .toString()
+                    );
+
+                    statement.setInt(
+                            2,
+                            order
+                    );
+
+                    statement.setString(
+                            3,
+                            session.getDate()
+                                    .toString()
+                    );
+
+                    statement.setString(
+                            4,
+                            session.getTopic()
+                    );
+
+                    statement.setInt(
+                            5,
+                            session.getMinutes()
+                    );
+
+                    statement.addBatch();
+
+                    order++;
+                }
+
+                statement.executeBatch();
+            }
+
+            connection.commit();
+
+            return plan;
+
+        } catch (SQLException e) {
+
+            try {
+
+                connection.rollback();
+
+            } catch (SQLException ignored) {
+            }
+
+            throw new RuntimeException(
+                    "Unable to save study plan.",
+                    e
+            );
+
+        } finally {
+
+            try {
+
+                connection.setAutoCommit(
+                        true
+                );
+
+            } catch (SQLException ignored) {
             }
         }
     }
