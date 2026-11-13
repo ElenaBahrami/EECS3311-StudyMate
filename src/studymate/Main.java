@@ -14,6 +14,8 @@ import studymate.agent.ToolRegistry;
 import studymate.extraction.TextExtractor;
 import studymate.model.AvailabilitySlot;
 import studymate.model.Course;
+import studymate.model.Flashcard;
+import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.Material;
 import studymate.model.StudyPlan;
@@ -125,6 +127,13 @@ public class Main {
                         );
 
                 case "6" ->
+                        generateFlashcards(
+                                scanner,
+                                learningAgent,
+                                course
+                        );
+
+                case "7" ->
                         showMaterials(
                                 repository,
                                 course
@@ -192,7 +201,11 @@ public class Main {
         );
 
         System.out.println(
-                "6 - Show saved materials"
+                "6 - Generate flashcards"
+        );
+
+        System.out.println(
+                "7 - Show saved materials"
         );
 
         System.out.println(
@@ -207,7 +220,7 @@ public class Main {
     }
 
     // =====================================================
-    // F01
+    // F01 - IMPORT MATERIAL
     // =====================================================
 
     private static void importMaterial(
@@ -269,7 +282,7 @@ public class Main {
     }
 
     // =====================================================
-    // F02
+    // F02 - SUMMARISE MATERIALS
     // =====================================================
 
     private static void summarise(
@@ -322,7 +335,7 @@ public class Main {
     }
 
     // =====================================================
-    // F03
+    // F03 - EXTRACT KEY CONCEPTS
     // =====================================================
 
     private static void extractConcepts(
@@ -376,7 +389,7 @@ public class Main {
     }
 
     // =====================================================
-    // F04
+    // F04 - QUESTION AND ANSWER
     // =====================================================
 
     private static void askQuestion(
@@ -436,7 +449,7 @@ public class Main {
     }
 
     // =====================================================
-    // F05
+    // F05 - GENERATE STUDY PLAN
     // =====================================================
 
     private static void generateStudyPlan(
@@ -777,7 +790,200 @@ public class Main {
     }
 
     // =====================================================
-    // MATERIAL LIST
+    // F06 - GENERATE FLASHCARDS
+    // =====================================================
+
+    private static void generateFlashcards(
+            Scanner scanner,
+            LearningAgent learningAgent,
+            Course course) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== GENERATE FLASHCARDS ====="
+        );
+
+        System.out.println();
+
+        System.out.print(
+                "Topic: "
+        );
+
+        String topic =
+                scanner.nextLine()
+                        .trim();
+
+        if (topic.isBlank()) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Flashcard generation rejected: "
+                            + "topic cannot be empty."
+            );
+
+            return;
+        }
+
+        System.out.print(
+                "Number of flashcards (1-30): "
+        );
+
+        String countText =
+                scanner.nextLine()
+                        .trim();
+
+        try {
+
+            int requestedCount =
+                    Integer.parseInt(
+                            countText
+                    );
+
+            if (requestedCount < 1
+                    || requestedCount > 30) {
+
+                System.out.println();
+
+                System.out.println(
+                        "Flashcard generation rejected: "
+                                + "count must be between "
+                                + "1 and 30."
+                );
+
+                return;
+            }
+
+            System.out.println();
+
+            System.out.println(
+                    "Generating grounded flashcards..."
+            );
+
+            FlashcardDeck deck =
+                    learningAgent
+                            .generateFlashcards(
+                                    course.id(),
+                                    topic,
+                                    requestedCount
+                            );
+
+            printFlashcardDeck(
+                    deck
+            );
+
+        } catch (NumberFormatException e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Flashcard generation rejected: "
+                            + "please enter a valid number."
+            );
+
+        } catch (Exception e) {
+
+            System.out.println();
+
+            System.out.println(
+                    "Flashcard generation failed: "
+                            + e.getMessage()
+            );
+        }
+    }
+
+    private static void printFlashcardDeck(
+            FlashcardDeck deck) {
+
+        System.out.println();
+
+        System.out.println(
+                "===== FLASHCARD DECK ====="
+        );
+
+        System.out.println();
+
+        System.out.println(
+                "Topic: "
+                        + deck.getTopic()
+        );
+
+        System.out.println(
+                "Requested cards: "
+                        + deck.getRequestedCount()
+        );
+
+        System.out.println(
+                "Generated cards: "
+                        + deck.getCards()
+                                .size()
+        );
+
+        System.out.println();
+
+        if (deck.getCards()
+                .isEmpty()) {
+
+            System.out.println(
+                    "No supported flashcards "
+                            + "could be generated."
+            );
+
+            System.out.println(
+                    "The deck was NOT saved."
+            );
+
+            return;
+        }
+
+        int number = 1;
+
+        for (Flashcard card :
+                deck.getCards()) {
+
+            System.out.println(
+                    "Card " + number
+            );
+
+            System.out.println(
+                    "Q: "
+                            + card.getQuestion()
+            );
+
+            System.out.println(
+                    "A: "
+                            + card.getAnswer()
+            );
+
+            System.out.println(
+                    "Source: "
+                            + card.getSourceId()
+            );
+
+            System.out.println();
+
+            number++;
+        }
+
+        if (deck.isReducedDeck()) {
+
+            System.out.println(
+                    "Note: The available course evidence "
+                            + "supported fewer cards than "
+                            + "requested."
+            );
+
+            System.out.println();
+        }
+
+        System.out.println(
+                "The flashcard deck was saved."
+        );
+    }
+
+    // =====================================================
+    // SHOW MATERIALS
     // =====================================================
 
     private static void showMaterials(

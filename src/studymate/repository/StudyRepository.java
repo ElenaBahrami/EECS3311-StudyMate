@@ -12,6 +12,8 @@ import java.util.UUID;
 
 import studymate.model.Chunk;
 import studymate.model.Course;
+import studymate.model.Flashcard;
+import studymate.model.FlashcardDeck;
 import studymate.model.Material;
 import studymate.model.StudyPlan;
 import studymate.model.StudySession;
@@ -124,6 +126,35 @@ public class StudyRepository {
                 );
                 """;
 
+        String createFlashcardDecksTable =
+                """
+                CREATE TABLE IF NOT EXISTS flashcard_decks (
+                    id TEXT PRIMARY KEY,
+                    course_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    requested_count INTEGER NOT NULL,
+
+                    FOREIGN KEY(course_id)
+                        REFERENCES courses(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
+        String createFlashcardsTable =
+                """
+                CREATE TABLE IF NOT EXISTS flashcards (
+                    id TEXT PRIMARY KEY,
+                    deck_id TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+
+                    FOREIGN KEY(deck_id)
+                        REFERENCES flashcard_decks(id)
+                        ON DELETE CASCADE
+                );
+                """;
+
         try (Statement statement =
                      connection.createStatement()) {
 
@@ -145,6 +176,14 @@ public class StudyRepository {
 
             statement.execute(
                     createStudySessionsTable
+            );
+
+            statement.execute(
+                    createFlashcardDecksTable
+            );
+
+            statement.execute(
+                    createFlashcardsTable
             );
         }
     }
@@ -279,16 +318,13 @@ public class StudyRepository {
                 findCourseByName(name);
 
         if (existing != null) {
-
             return existing;
         }
 
         Course course =
                 new Course(name);
 
-        return saveCourse(
-                course
-        );
+        return saveCourse(course);
     }
 
     // =====================================================
@@ -314,9 +350,7 @@ public class StudyRepository {
 
         try {
 
-            connection.setAutoCommit(
-                    false
-            );
+            connection.setAutoCommit(false);
 
             try (PreparedStatement materialStatement =
                          connection.prepareStatement(
@@ -391,9 +425,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -405,11 +437,7 @@ public class StudyRepository {
         } finally {
 
             try {
-
-                connection.setAutoCommit(
-                        true
-                );
-
+                connection.setAutoCommit(true);
             } catch (SQLException ignored) {
             }
         }
@@ -443,9 +471,7 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(
-                        material
-                );
+                loadChunks(material);
 
                 return material;
             }
@@ -489,9 +515,7 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(
-                        material
-                );
+                loadChunks(material);
 
                 return material;
             }
@@ -540,13 +564,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(
-                        material
-                );
+                loadChunks(material);
 
-                materials.add(
-                        material
-                );
+                materials.add(material);
             }
 
         } catch (SQLException e) {
@@ -586,13 +606,9 @@ public class StudyRepository {
                                 result
                         );
 
-                loadChunks(
-                        material
-                );
+                loadChunks(material);
 
-                materials.add(
-                        material
-                );
+                materials.add(material);
             }
 
         } catch (SQLException e) {
@@ -681,9 +697,7 @@ public class StudyRepository {
                                 )
                         );
 
-                material.addChunk(
-                        chunk
-                );
+                material.addChunk(chunk);
             }
         }
     }
@@ -702,11 +716,6 @@ public class StudyRepository {
             );
         }
 
-        /*
-         * Stage 1 requirement:
-         * invalid/infeasible plans must not
-         * be persisted.
-         */
         if (!plan.isFeasible()) {
 
             throw new IllegalArgumentException(
@@ -738,9 +747,7 @@ public class StudyRepository {
 
         try {
 
-            connection.setAutoCommit(
-                    false
-            );
+            connection.setAutoCommit(false);
 
             try (PreparedStatement statement =
                          connection.prepareStatement(
@@ -825,9 +832,7 @@ public class StudyRepository {
         } catch (SQLException e) {
 
             try {
-
                 connection.rollback();
-
             } catch (SQLException ignored) {
             }
 
@@ -839,11 +844,151 @@ public class StudyRepository {
         } finally {
 
             try {
+                connection.setAutoCommit(true);
+            } catch (SQLException ignored) {
+            }
+        }
+    }
 
-                connection.setAutoCommit(
-                        true
+    // =====================================================
+    // F06 - FLASHCARD DECKS
+    // =====================================================
+
+    public FlashcardDeck saveFlashcardDeck(
+            FlashcardDeck deck) {
+
+        if (deck == null) {
+
+            throw new IllegalArgumentException(
+                    "Flashcard deck is required."
+            );
+        }
+
+        if (deck.getCards().isEmpty()) {
+
+            throw new IllegalArgumentException(
+                    "Cannot save an empty flashcard deck."
+            );
+        }
+
+        if (findCourse(
+                deck.getCourseId()) == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        String deckSql =
+                """
+                INSERT INTO flashcard_decks
+                (id, course_id, topic, requested_count)
+                VALUES (?, ?, ?, ?);
+                """;
+
+        String cardSql =
+                """
+                INSERT INTO flashcards
+                (id, deck_id, question, answer, source_id)
+                VALUES (?, ?, ?, ?, ?);
+                """;
+
+        try {
+
+            connection.setAutoCommit(false);
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 deckSql
+                         )) {
+
+                statement.setString(
+                        1,
+                        deck.getId()
+                                .toString()
                 );
 
+                statement.setString(
+                        2,
+                        deck.getCourseId()
+                                .toString()
+                );
+
+                statement.setString(
+                        3,
+                        deck.getTopic()
+                );
+
+                statement.setInt(
+                        4,
+                        deck.getRequestedCount()
+                );
+
+                statement.executeUpdate();
+            }
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(
+                                 cardSql
+                         )) {
+
+                for (Flashcard card :
+                        deck.getCards()) {
+
+                    statement.setString(
+                            1,
+                            card.getId()
+                                    .toString()
+                    );
+
+                    statement.setString(
+                            2,
+                            deck.getId()
+                                    .toString()
+                    );
+
+                    statement.setString(
+                            3,
+                            card.getQuestion()
+                    );
+
+                    statement.setString(
+                            4,
+                            card.getAnswer()
+                    );
+
+                    statement.setString(
+                            5,
+                            card.getSourceId()
+                                    .toString()
+                    );
+
+                    statement.addBatch();
+                }
+
+                statement.executeBatch();
+            }
+
+            connection.commit();
+
+            return deck;
+
+        } catch (SQLException e) {
+
+            try {
+                connection.rollback();
+            } catch (SQLException ignored) {
+            }
+
+            throw new RuntimeException(
+                    "Unable to save flashcard deck.",
+                    e
+            );
+
+        } finally {
+
+            try {
+                connection.setAutoCommit(true);
             } catch (SQLException ignored) {
             }
         }

@@ -2,11 +2,15 @@ package studymate.agent;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import studymate.model.AvailabilitySlot;
+import studymate.model.Flashcard;
+import studymate.model.FlashcardDeck;
 import studymate.model.LearningArtifact;
 import studymate.model.StudyPlan;
 import studymate.model.StudyTopic;
@@ -176,7 +180,7 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // F05 - GENERATE PERSONALISED STUDY PLAN
+    // F05 - GENERATE STUDY PLAN
     // =====================================================
 
     public StudyPlan generateStudyPlan(
@@ -242,9 +246,7 @@ public class LearningAgent {
                         )
                 );
 
-        if (retrieval
-                .getSourceIds()
-                .isEmpty()) {
+        if (retrieval.getSourceIds().isEmpty()) {
 
             throw new IllegalStateException(
                     "No course evidence is available."
@@ -278,11 +280,6 @@ public class LearningAgent {
                 - Do not include source identifiers.
                 - Do not include any text before or after
                   the TOPIC lines.
-
-                Example format:
-
-                TOPIC|Adapter Pattern|45|5
-                TOPIC|Observer Pattern|45|4
                 """;
 
         ModelReply reply =
@@ -320,15 +317,6 @@ public class LearningAgent {
                         strategy
                 );
 
-        /*
-         * Stage 1 rule:
-         * save only a feasible plan.
-         *
-         * If capacity is insufficient,
-         * return the plan with its
-         * unscheduled topics but do not
-         * persist it.
-         */
         if (plan.isFeasible()) {
 
             repository.savePlan(
@@ -340,7 +328,146 @@ public class LearningAgent {
     }
 
     // =====================================================
-    // PARSE AI TOPIC OUTPUT
+    // F06 - GENERATE FLASHCARDS
+    // =====================================================
+
+    public FlashcardDeck generateFlashcards(
+            UUID courseId,
+            String topic,
+            int requestedCount)
+            throws Exception {
+
+        if (courseId == null) {
+
+            throw new IllegalArgumentException(
+                    "Course ID is required."
+            );
+        }
+
+        if (repository.findCourse(courseId)
+                == null) {
+
+            throw new IllegalArgumentException(
+                    "Unknown course ID."
+            );
+        }
+
+        if (topic == null
+                || topic.isBlank()) {
+
+            throw new IllegalArgumentException(
+                    "Topic cannot be empty."
+            );
+        }
+
+        if (requestedCount < 1
+                || requestedCount > 30) {
+
+            throw new IllegalArgumentException(
+                    "Flashcard count must be between 1 and 30."
+            );
+        }
+
+        ToolResult retrieval =
+                tools.execute(
+                        "retrieve",
+                        Map.of(
+                                "courseId",
+                                courseId.toString(),
+                                "query",
+                                topic
+                        )
+                );
+
+        if (retrieval.getSourceIds().isEmpty()) {
+
+            return new FlashcardDeck(
+                    courseId,
+                    topic,
+                    requestedCount,
+                    List.of()
+            );
+        }
+
+        String instructions =
+                """
+                Generate study flashcards using only the
+                supplied course evidence.
+
+                Requested topic:
+                %s
+
+                Requested number of cards:
+                %d
+
+                Return ONLY lines in exactly this format:
+
+                CARD|source UUID|question|answer
+
+                Rules:
+
+                - Generate no more than the requested count.
+                - Every card must be supported by the evidence.
+                - The source UUID must exactly match one of
+                  the supplied [SOURCE ...] identifiers.
+                - Questions must be distinct.
+                - Answers must be concise and factual.
+                - Do not use outside knowledge.
+                - If the evidence supports fewer cards,
+                  return fewer cards.
+                - Do not include headings.
+                - Do not include Markdown.
+                - Do not include any other text.
+
+                Example:
+
+                CARD|123e4567-e89b-12d3-a456-426614174000|What is an adapter?|It translates between incompatible interfaces.
+                """.formatted(
+                        topic,
+                        requestedCount
+                );
+
+        ModelReply reply =
+                client.generate(
+                        retrieval.getData(),
+                        instructions
+                );
+
+        if (reply.getType()
+                != ModelReply.Type.FINAL) {
+
+            throw new IllegalStateException(
+                    "Model did not return flashcards."
+            );
+        }
+
+        List<Flashcard> cards =
+                parseFlashcards(
+                        reply.getFinalPayload(),
+                        retrieval.getSourceIds(),
+                        requestedCount
+                );
+
+        FlashcardDeck deck =
+                new FlashcardDeck(
+                        courseId,
+                        topic,
+                        requestedCount,
+                        cards
+                );
+
+        if (!deck.getCards().isEmpty()) {
+
+            repository.saveFlashcardDeck(
+                    deck
+            );
+        }
+
+        return deck;
+    }
+
+    // =====================================================
+    // F05 PARSING
     // =====================================================
 
     private List<StudyTopic> parseStudyTopics(
@@ -414,11 +541,131 @@ public class LearningAgent {
 
             } catch (NumberFormatException e) {
 
-                // Ignore malformed model lines.
+                // Ignore malformed AI output.
             }
         }
 
         return topics;
+    }
+
+    // =====================================================
+    // F06 PARSING + VALIDATION
+    // =====================================================
+
+    private List<Flashcard> parseFlashcards(
+            String payload,
+            List<UUID> allowedSourceIds,
+            int requestedCount) {
+
+        List<Flashcard> cards =
+                new ArrayList<>();
+
+        if (payload == null
+                || payload.isBlank()) {
+
+            return cards;
+        }
+
+        Set<UUID> allowedSources =
+                new HashSet<>(
+                        allowedSourceIds
+                );
+
+        Set<String> usedQuestions =
+                new HashSet<>();
+
+        String[] lines =
+                payload.split("\\R");
+
+        for (String rawLine :
+                lines) {
+
+            if (cards.size()
+                    >= requestedCount) {
+
+                break;
+            }
+
+            String line =
+                    rawLine.trim();
+
+            if (!line.startsWith(
+                    "CARD|")) {
+
+                continue;
+            }
+
+            String[] parts =
+                    line.split(
+                            "\\|",
+                            4
+                    );
+
+            if (parts.length != 4) {
+
+                continue;
+            }
+
+            String sourceText =
+                    parts[1].trim();
+
+            String question =
+                    parts[2].trim();
+
+            String answer =
+                    parts[3].trim();
+
+            if (question.isBlank()
+                    || answer.isBlank()) {
+
+                continue;
+            }
+
+            UUID sourceId;
+
+            try {
+
+                sourceId =
+                        UUID.fromString(
+                                sourceText
+                        );
+
+            } catch (IllegalArgumentException e) {
+
+                continue;
+            }
+
+            if (!allowedSources.contains(
+                    sourceId)) {
+
+                continue;
+            }
+
+            String normalizedQuestion =
+                    question
+                            .toLowerCase()
+                            .trim();
+
+            if (usedQuestions.contains(
+                    normalizedQuestion)) {
+
+                continue;
+            }
+
+            usedQuestions.add(
+                    normalizedQuestion
+            );
+
+            cards.add(
+                    new Flashcard(
+                            question,
+                            answer,
+                            sourceId
+                    )
+            );
+        }
+
+        return cards;
     }
 
     // =====================================================
